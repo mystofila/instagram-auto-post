@@ -19,7 +19,7 @@ Le post doit contenir :
 Réponds uniquement avec le texte du post, sans commentaire."""
 
 response = client.models.generate_content(
-    model="gemini-2.0-flash",
+    model="gemma-3-27b-it",
     contents=prompt
 )
 caption = response.text
