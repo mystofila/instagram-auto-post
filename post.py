@@ -1,6 +1,6 @@
 import os
 import requests
-import google.generativeai as genai
+from google import genai
 
 # Config
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -8,8 +8,7 @@ IG_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID = os.environ["INSTAGRAM_USER_ID"]
 
 # Générer le texte avec Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 prompt = """Génère un post Instagram court et engageant sur le thème de l'emploi et du CV.
 Le post doit contenir :
@@ -19,11 +18,14 @@ Le post doit contenir :
 - Maximum 300 caractères
 Réponds uniquement avec le texte du post, sans commentaire."""
 
-response = model.generate_content(prompt)
+response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=prompt
+)
 caption = response.text
 print(f"Caption générée : {caption}")
 
-# Image publique placeholder (on utilisera une vraie image après)
+# Image publique
 image_url = "https://images.unsplash.com/photo-1586281380349-632531db7ed4?w=1080"
 
 # Étape 1 : Créer le conteneur média
