@@ -49,9 +49,9 @@ Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire :
 {{
   "accroche": "titre choc max 35 caractères sans emoji",
   "slides": [
-    {{"titre": "point 1 max 5 mots", "contenu": "conseil concret en max 12 mots"}},
-    {{"titre": "point 2 max 5 mots", "contenu": "conseil concret en max 12 mots"}},
-    {{"titre": "point 3 max 5 mots", "contenu": "conseil concret en max 12 mots"}}
+    {{"titre": "point 1 max 5 mots", "contenu": "UNE phrase courte et complète, 15 mots maximum, qui se termine toujours par un point"}},
+    {{"titre": "point 2 max 5 mots", "contenu": "UNE phrase courte et complète, 15 mots maximum, qui se termine toujours par un point"}},
+    {{"titre": "point 3 max 5 mots", "contenu": "UNE phrase courte et complète, 15 mots maximum, qui se termine toujours par un point"}}
   ],
   "cta": "call to action max 30 caractères sans emoji",
   "caption": "texte Instagram avec 5 hashtags français, max 200 caractères sans emoji"
