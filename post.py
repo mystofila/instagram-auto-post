@@ -40,18 +40,21 @@ theme = random.choice(themes)
 prompt = f"""Tu es un expert en recrutement et coach carrière français.
 Génère le contenu pour un carrousel Instagram de 5 slides sur : {theme}
 
-IMPORTANT : N'utilise AUCUN emoji et AUCUN caractère spécial. Uniquement du texte simple.
+IMPORTANT :
+- N'utilise AUCUN emoji et AUCUN caractère spécial
+- Texte uniquement en français simple
+- Le contenu de chaque slide doit faire maximum 12 mots
 
-Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire, exactement ce format :
+Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire :
 {{
-  "accroche": "titre choc de la slide 1, max 40 caractères, sans emoji",
+  "accroche": "titre choc max 35 caractères sans emoji",
   "slides": [
-    {{"titre": "point 1 court sans emoji", "contenu": "explication en 1-2 phrases max, concrète, sans emoji"}},
-    {{"titre": "point 2 court sans emoji", "contenu": "explication en 1-2 phrases max, concrète, sans emoji"}},
-    {{"titre": "point 3 court sans emoji", "contenu": "explication en 1-2 phrases max, concrète, sans emoji"}}
+    {{"titre": "point 1 max 5 mots", "contenu": "conseil concret en max 12 mots"}},
+    {{"titre": "point 2 max 5 mots", "contenu": "conseil concret en max 12 mots"}},
+    {{"titre": "point 3 max 5 mots", "contenu": "conseil concret en max 12 mots"}}
   ],
-  "cta": "phrase call to action courte pour la slide 5, sans emoji",
-  "caption": "texte du post Instagram avec 5 hashtags français pertinents, max 200 caractères, sans emoji"
+  "cta": "call to action max 30 caractères sans emoji",
+  "caption": "texte Instagram avec 5 hashtags français, max 200 caractères sans emoji"
 }}"""
 
 response = client.models.generate_content(
@@ -67,100 +70,22 @@ if "```" in raw:
 data = json.loads(raw.strip())
 print(f"Contenu généré : {data}")
 
-# Palettes de couleurs contrastées
+# Palettes sombres et contrastées
 palettes = [
-    [(15, 32, 78), (30, 90, 180)],      # Bleu nuit profond
-    [(78, 15, 60), (180, 30, 140)],     # Violet intense
-    [(15, 78, 40), (30, 180, 90)],      # Vert foncé
-    [(78, 30, 15), (200, 80, 20)],      # Orange brûlé
-    [(20, 60, 78), (30, 160, 180)],     # Bleu canard
+    [(15, 32, 78), (30, 90, 180)],
+    [(78, 15, 60), (180, 30, 140)],
+    [(15, 78, 40), (30, 180, 90)],
+    [(78, 30, 15), (200, 80, 20)],
+    [(20, 60, 78), (30, 160, 180)],
 ]
 
 def create_slide(text_title, text_body, filename, index=1):
     W, H = 1080, 1080
-    img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
-
-    # Dégradé diagonal
-    c1, c2 = palettes[index % len(palettes)]
-    for y in range(H):
-        for x in range(W):
-            ratio = (x + y) / (W + H)
-            r = int(c1[0] + (c2[0] - c1[0]) * ratio)
-            g = int(c1[1] + (c2[1] - c1[1]) * ratio)
-            b = int(c1[2] + (c2[2] - c1[2]) * ratio)
-            draw.point((x, y), fill=(r, g, b))
-
-    # Cercle décoratif haut droite
-    draw.ellipse([780, -150, 1230, 300], fill=(*c2, 40), outline=None)
-    # Cercle décoratif bas gauche
-    draw.ellipse([-150, 780, 300, 1230], fill=(*c2, 30), outline=None)
-
-    # Bande colorée gauche
-    draw.rectangle([0, 0, 12, H], fill=(255, 255, 255, 180))
-
-    try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 76)
-        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 46)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
-        font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
-    except:
-        font_title = ImageFont.load_default()
-        font_body = font_title
-        font_small = font_title
-        font_brand = font_title
-
-    # Numéro slide en haut à droite
-    num_text = f"{index} / 5"
-    bbox = draw.textbbox((0, 0), num_text, font=font_small)
-    draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill=(255, 255, 255))
-
-    # Titre
-    wrapped_title = textwrap.wrap(text_title, width=17)
-    y_pos = 320 if text_body else 420
-    for line in wrapped_title:
-        bbox = draw.textbbox((0, 0), line, font=font_title)
-        w = bbox[2] - bbox[0]
-        draw.text(((W - w) / 2, y_pos), line, font=font_title, fill="white")
-        y_pos += 95
-
-    # Ligne décorative sous le titre
-    line_w = 120
-    draw.rectangle([(W - line_w) / 2, y_pos + 15, (W + line_w) / 2, y_pos + 22], fill="white")
-    y_pos += 60
-
-    # Corps
-    if text_body:
-        wrapped_body = textwrap.wrap(text_body, width=30)
-        y_pos += 20
-        for line in wrapped_body:
-            bbox = draw.textbbox((0, 0), line, font=font_body)
-            w = bbox[2] - bbox[0]
-            draw.text(((W - w) / 2, y_pos), line, font=font_body, fill=(210, 225, 255))
-            y_pos += 62
-
-    # Branding en bas
-    brand = "@mystofila"
-    bbox = draw.textbbox((0, 0), brand, font=font_brand)
-    w = bbox[2] - bbox[0]
-    draw.text(((W - w) / 2, H - 70), brand, font=font_brand, fill=(255, 255, 255))
-
-    # Ligne décorative au dessus du branding
-    draw.rectangle([80, H - 90, W - 80, H - 84], fill=(255, 255, 255))
-
-    img.save(filename, quality=95)
-    print(f"Slide créée : {filename}")
-
-# ⚠️ Dégradé diagonal pixel par pixel = lent
-# On optimise avec numpy-free line par line diagonal
-def create_slide_fast(text_title, text_body, filename, index=1):
-    W, H = 1080, 1080
     c1, c2 = palettes[index % len(palettes)]
 
-    # Créer dégradé diagonal via deux passages
+    # Dégradé vertical
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
-
     for y in range(H):
         ratio = y / H
         r = int(c1[0] + (c2[0] - c1[0]) * ratio)
@@ -186,7 +111,7 @@ def create_slide_fast(text_title, text_body, filename, index=1):
 
     try:
         font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 76)
-        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 46)
+        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 42)
         font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
         font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
     except:
@@ -195,14 +120,14 @@ def create_slide_fast(text_title, text_body, filename, index=1):
         font_small = font_title
         font_brand = font_title
 
-    # Numéro slide
+    # Numéro slide en haut à droite
     num_text = f"{index} / 5"
     bbox = draw.textbbox((0, 0), num_text, font=font_small)
-    draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill=(255, 255, 255))
+    draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill="white")
 
-    # Titre
-    wrapped_title = textwrap.wrap(text_title, width=17)
-    y_pos = 300 if text_body else 400
+    # Titre centré
+    wrapped_title = textwrap.wrap(text_title, width=16)
+    y_pos = 320 if text_body else 430
     for line in wrapped_title:
         bbox = draw.textbbox((0, 0), line, font=font_title)
         w = bbox[2] - bbox[0]
@@ -213,22 +138,22 @@ def create_slide_fast(text_title, text_body, filename, index=1):
     draw.rectangle([(W - 140) / 2, y_pos + 10, (W + 140) / 2, y_pos + 18], fill="white")
     y_pos += 55
 
-    # Corps
+    # Corps — max 3 lignes
     if text_body:
-        wrapped_body = textwrap.wrap(text_body, width=30)
-        y_pos += 15
+        wrapped_body = textwrap.wrap(text_body, width=26)[:3]
+        y_pos += 20
         for line in wrapped_body:
             bbox = draw.textbbox((0, 0), line, font=font_body)
             w = bbox[2] - bbox[0]
             draw.text(((W - w) / 2, y_pos), line, font=font_body, fill=(200, 220, 255))
-            y_pos += 62
+            y_pos += 60
 
-    # Ligne et branding
-    draw.rectangle([60, H - 95, W - 60, H - 89], fill=(255, 255, 255))
+    # Ligne et branding en bas
+    draw.rectangle([60, H - 110, W - 60, H - 104], fill="white")
     brand = "@mystofila"
     bbox = draw.textbbox((0, 0), brand, font=font_brand)
     w = bbox[2] - bbox[0]
-    draw.text(((W - w) / 2, H - 75), brand, font=font_brand, fill="white")
+    draw.text(((W - w) / 2, H - 90), brand, font=font_brand, fill="white")
 
     img.save(filename, quality=95)
     print(f"Slide créée : {filename}")
@@ -236,15 +161,15 @@ def create_slide_fast(text_title, text_body, filename, index=1):
 # Créer les 5 slides
 slides_files = []
 
-create_slide_fast(data["accroche"], "", "slide_1.jpg", 1)
+create_slide(data["accroche"], "", "slide_1.jpg", 1)
 slides_files.append("slide_1.jpg")
 
 for i, slide in enumerate(data["slides"][:3]):
     fname = f"slide_{i+2}.jpg"
-    create_slide_fast(slide["titre"], slide["contenu"], fname, i+2)
+    create_slide(slide["titre"], slide["contenu"], fname, i+2)
     slides_files.append(fname)
 
-create_slide_fast(data["cta"], "Sauvegarde ce post !", "slide_5.jpg", 5)
+create_slide(data["cta"], "Sauvegarde ce post !", "slide_5.jpg", 5)
 slides_files.append("slide_5.jpg")
 
 print(f"Slides créées : {slides_files}")
