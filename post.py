@@ -8,7 +8,64 @@ from PIL import Image, ImageDraw, ImageFont
 from google import genai
 import cloudinary
 import cloudinary.uploader
+import base64
+from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 
+def refresh_instagram_token(current_token):
+    """Rafraîchit le token Instagram et met à jour le secret GitHub"""
+    # Rafraîchir le token
+    r = requests.get(
+        "https://graph.instagram.com/refresh_access_token",
+        params={
+            "grant_type": "ig_refresh_token",
+            "access_token": current_token
+        }
+    )
+    data = r.json()
+    if "access_token" not in data:
+        print(f"Impossible de rafraîchir le token : {data}")
+        return current_token
+    
+    new_token = data["access_token"]
+    print(f"Token rafraîchi avec succes !")
+
+    # Mettre à jour le secret GitHub
+    gh_token = os.environ["GH_TOKEN"]
+    repo = "mystofila/instagram-auto-post"
+    
+    # Récupérer la clé publique du repo
+    pub_r = requests.get(
+        f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
+        headers={"Authorization": f"token {gh_token}"}
+    )
+    pub_data = pub_r.json()
+    pub_key = pub_data["key"]
+    key_id = pub_data["key_id"]
+
+    # Chiffrer le nouveau token
+    public_key = serialization.load_der_public_key(
+        base64.b64decode(pub_key),
+        backend=default_backend()
+    )
+    encrypted = public_key.encrypt(new_token.encode(), PKCS1v15())
+    encrypted_b64 = base64.b64encode(encrypted).decode()
+
+    # Mettre à jour le secret
+    requests.put(
+        f"https://api.github.com/repos/{repo}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
+        headers={"Authorization": f"token {gh_token}"},
+        json={
+            "encrypted_value": encrypted_b64,
+            "key_id": key_id
+        }
+    )
+    print("Secret GitHub mis a jour !")
+    return new_token
+
+# Rafraîchir le token au début
+IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 # Config
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 IG_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
