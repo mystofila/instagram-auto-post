@@ -138,18 +138,19 @@ slides_files.append("slide_5.jpg")
 print(f"Slides créées : {slides_files}")
 
 # Uploader les images sur imgbb (gratuit, sans CB)
-IMGBB_API_KEY = os.environ["IMGBB_API_KEY"]
+import cloudinary
+import cloudinary.uploader
+
+cloudinary.config(
+    cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
+    api_key=os.environ["CLOUDINARY_API_KEY"],
+    api_secret=os.environ["CLOUDINARY_API_SECRET"]
+)
 
 image_urls = []
 for fname in slides_files:
-    with open(fname, "rb") as f:
-        import base64
-        img_b64 = base64.b64encode(f.read()).decode("utf-8")
-    r = requests.post(
-        "https://api.imgbb.com/1/upload",
-        data={"key": IMGBB_API_KEY, "image": img_b64}
-    )
-    url = r.json()["data"]["url"]
+    result = cloudinary.uploader.upload(fname)
+    url = result["secure_url"]
     image_urls.append(url)
     print(f"Image uploadée : {url}")
 
