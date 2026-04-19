@@ -101,15 +101,17 @@ Génère le contenu pour un carrousel Instagram de 5 slides sur : {theme}
 IMPORTANT :
 - N'utilise AUCUN emoji et AUCUN caractère spécial
 - Texte uniquement en français simple
-- Le contenu de chaque slide doit faire maximum 12 mots
+- Le contenu de chaque slide doit faire maximum 20 mots
+- Chaque "contenu" doit etre une phrase grammaticalement complete avec un point final
+- Si tu ne peux pas tenir en 20 mots, ecris 15 mots mais termine la phrase correctement
 
 Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire :
 {{
   "accroche": "titre choc max 35 caractères sans emoji",
   "slides": [
-    {{"titre": "point 1 max 5 mots", "contenu": "UNE phrase courte et complète, 15 mots maximum, qui se termine toujours par un point"}},
-    {{"titre": "point 2 max 5 mots", "contenu": "UNE phrase courte et complète, 15 mots maximum, qui se termine toujours par un point"}},
-    {{"titre": "point 3 max 5 mots", "contenu": "UNE phrase courte et complète, 15 mots maximum, qui se termine toujours par un point"}}
+    {{"titre": "point 1 max 5 mots", "contenu": "UNE phrase courte et complète, 20 mots maximum, qui se termine toujours par un point"}},
+    {{"titre": "point 2 max 5 mots", "contenu": "UNE phrase courte et complète, 20 mots maximum, qui se termine toujours par un point"}},
+    {{"titre": "point 3 max 5 mots", "contenu": "UNE phrase courte et complète, 20 mots maximum, qui se termine toujours par un point"}}
   ],
   "cta": "call to action max 30 caractères sans emoji",
   "caption": "texte Instagram avec 5 hashtags français, max 200 caractères sans emoji"
