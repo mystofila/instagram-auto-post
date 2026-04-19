@@ -126,7 +126,7 @@ def create_slide(text_title, text_body, filename, index=1):
     draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill="white")
 
     # Titre centré
-    wrapped_title = textwrap.wrap(text_title, width=16)
+    wrapped_title = textwrap.wrap(text_title, width=20, break_long_words=False, break_on_hyphens=False)
     y_pos = 320 if text_body else 430
     for line in wrapped_title:
         bbox = draw.textbbox((0, 0), line, font=font_title)
