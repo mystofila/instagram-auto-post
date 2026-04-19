@@ -27,6 +27,7 @@ cloudinary.config(
 
 # 3. Fonction refresh token
 def refresh_instagram_token(current_token):
+    # Rafraîchir le token
     r = requests.get(
         "https://graph.instagram.com/refresh_access_token",
         params={
@@ -45,6 +46,7 @@ def refresh_instagram_token(current_token):
     gh_token = os.environ["GH_TOKEN"]
     repo = "mystofila/instagram-auto-post"
     
+    # Récupérer la clé publique du repo
     pub_r = requests.get(
         f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
         headers={"Authorization": f"token {gh_token}"}
@@ -53,14 +55,15 @@ def refresh_instagram_token(current_token):
     pub_key = pub_data["key"]
     key_id = pub_data["key_id"]
 
-    public_key = serialization.load_der_public_key(
-        base64.b64decode(pub_key),
-        backend=default_backend()
-    )
-    encrypted = public_key.encrypt(new_token.encode(), PKCS1v15())
+    # Chiffrer avec PyNaCl (format LibSodium utilisé par GitHub)
+    from nacl import encoding, public
+    public_key_obj = public.PublicKey(pub_key.encode(), encoding.Base64Encoder())
+    sealed_box = public.SealedBox(public_key_obj)
+    encrypted = sealed_box.encrypt(new_token.encode())
     encrypted_b64 = base64.b64encode(encrypted).decode()
 
-    requests.put(
+    # Mettre à jour le secret
+    update_r = requests.put(
         f"https://api.github.com/repos/{repo}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
         headers={"Authorization": f"token {gh_token}"},
         json={
@@ -68,9 +71,8 @@ def refresh_instagram_token(current_token):
             "key_id": key_id
         }
     )
-    print("Secret GitHub mis a jour !")
+    print(f"Secret GitHub mis a jour : {update_r.status_code}")
     return new_token
-
 # 4. Rafraîchir le token
 IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 
