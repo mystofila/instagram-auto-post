@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install google-genai requests Pillow
+          pip install google-genai requests Pillow cloudinary
 
       - name: Run post script
         env:
