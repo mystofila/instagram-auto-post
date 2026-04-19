@@ -23,7 +23,7 @@ jobs:
         run: sudo apt-get install -y fonts-noto-color-emoji
 
       - name: Install Python dependencies
-        run: pip install google-genai requests Pillow cloudinary
+        run: pip install google-genai requests Pillow cloudinary cryptography
 
       - name: Run post script
         env:
