@@ -171,7 +171,7 @@ def create_slide(text_title, text_body, filename, index=1):
 
     try:
         font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 76)
-        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 42)
+        font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
         font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
         font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
     except:
@@ -200,7 +200,7 @@ def create_slide(text_title, text_body, filename, index=1):
 
     # Corps — max 3 lignes
     if text_body:
-        wrapped_body = textwrap.wrap(text_body, width=26)[:3]
+        wrapped_body = textwrap.wrap(text_body, width=26)[:5]
         y_pos += 20
         for line in wrapped_body:
             bbox = draw.textbbox((0, 0), line, font=font_body)
