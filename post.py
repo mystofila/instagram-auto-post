@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import textwrap
+import time
 from PIL import Image, ImageDraw, ImageFont
 from google import genai
 
@@ -183,6 +184,10 @@ carousel_id = carousel_r.json()["id"]
 print(f"Carrousel créé : {carousel_r.json()}")
 
 # Étape 3 : publier
+
+
+# Étape 3 : publier
+time.sleep(10)  # Attendre que Meta traite les images
 publish_r = requests.post(
     f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media_publish",
     data={
