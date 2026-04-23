@@ -131,7 +131,7 @@ palettes = [
 
 def create_slide(text_title, text_body, filename, index=1):
     W, H = 1080, 1080
-    c1, c2 = palettes[index % len(palettes)]
+    c1, c2 = palettes[(index + random.randint(0, 4)) % len(palettes)]
 
     # Dégradé vertical
     img = Image.new("RGB", (W, H))
