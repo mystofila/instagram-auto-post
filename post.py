@@ -105,7 +105,6 @@ Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire :
   ],
   "cta": "call to action max 30 caractères sans emoji",
   "caption": "texte Instagram avec 5 hashtags français, max 200 caractères sans emoji"
-}}"""
 
 response = client.models.generate_content(
     model="gemma-3-27b-it",
