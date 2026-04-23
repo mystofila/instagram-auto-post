@@ -95,29 +95,13 @@ Tu choisis toi-même le sujet, le style et l'angle. Varie à chaque fois.
 - Si tu ne peux pas tenir en 20 mots, ecris 15 mots mais termine la phrase correctement
 - Réponds UNIQUEMENT avec le texte du post"""
 
-Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire :
-{{
-  "accroche": "titre choc max 35 caractères sans emoji",
-  "slides": [
-    {{"titre": "point 1 max 5 mots", "contenu": "UNE phrase courte et complète, 20 mots maximum, qui se termine toujours par un point"}},
-    {{"titre": "point 2 max 5 mots", "contenu": "UNE phrase courte et complète, 20 mots maximum, qui se termine toujours par un point"}},
-    {{"titre": "point 3 max 5 mots", "contenu": "UNE phrase courte et complète, 20 mots maximum, qui se termine toujours par un point"}}
-  ],
-  "cta": "call to action max 30 caractères sans emoji",
-  "caption": "texte Instagram avec 5 hashtags français, max 200 caractères sans emoji"
-
 response = client.models.generate_content(
     model="gemma-3-27b-it",
     contents=prompt
 )
 
-raw = response.text.strip()
-if "```" in raw:
-    raw = raw.split("```")[1]
-    if raw.startswith("json"):
-        raw = raw[4:]
-data = json.loads(raw.strip())
-print(f"Contenu généré : {data}")
+caption = response.text.strip()
+print(f"Contenu généré : {caption}")
 
 # Palettes sombres et contrastées
 palettes = [
