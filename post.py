@@ -81,29 +81,19 @@ IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 # Générer le contenu avec Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-themes = [
-    "les erreurs qui font jeter un CV en 10 secondes",
-    "comment réussir un entretien d'embauche",
-    "rédiger une lettre de motivation percutante",
-    "optimiser son profil LinkedIn pour être recruté",
-    "répondre à parlez-moi de vous en entretien",
-    "les mots à bannir de son CV",
-    "négocier son salaire sans stress",
-    "se démarquer sans expérience professionnelle",
-    "relancer un recruteur après un entretien",
-    "changer de secteur et convaincre les recruteurs",
-]
-theme = random.choice(themes)
+prompt = """Tu es un expert en recrutement et coach carrière français.
 
-prompt = f"""Tu es un expert en recrutement et coach carrière français.
-Génère le contenu pour un carrousel Instagram de 5 slides sur : {theme}
+Génère un post Instagram original sur un conseil lié à la recherche d'emploi, 
+le CV, la lettre de motivation ou les entretiens.
 
-IMPORTANT :
-- N'utilise AUCUN emoji et AUCUN caractère spécial
-- Texte uniquement en français simple
+Tu choisis toi-même le sujet, le style et l'angle. Varie à chaque fois.
+- 5 hashtags français pertinents
 - Le contenu de chaque slide doit faire maximum 20 mots
 - Chaque "contenu" doit etre une phrase grammaticalement complete avec un point final
+- Maximum 400 caractères
+- N'utilise AUCUN emoji et AUCUN caractère spécial
 - Si tu ne peux pas tenir en 20 mots, ecris 15 mots mais termine la phrase correctement
+- Réponds UNIQUEMENT avec le texte du post"""
 
 Réponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire :
 {{
