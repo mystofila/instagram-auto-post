@@ -15,6 +15,9 @@ import cloudinary.uploader
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 IG_TOKEN = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID = os.environ["INSTAGRAM_USER_ID"]
+GH_TOKEN = os.environ["GH_TOKEN"]
+REPO = "mystofila/instagram-auto-post"
+HISTORIQUE_FILE = "historique.json"
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -22,7 +25,37 @@ cloudinary.config(
     api_secret=os.environ["CLOUDINARY_API_SECRET"]
 )
 
-# Refresh token Instagram
+# ── NOUVEAU : Lire l'historique depuis GitHub ──────────────────────────────
+def get_historique_from_github():
+    """Récupère le fichier historique.json depuis le repo GitHub."""
+    r = requests.get(
+        f"https://api.github.com/repos/{REPO}/contents/{HISTORIQUE_FILE}",
+        headers={"Authorization": f"token {GH_TOKEN}"}
+    )
+    if r.status_code == 404:
+        return [], None  # Fichier inexistant, première exécution
+    data = r.json()
+    content = base64.b64decode(data["content"]).decode("utf-8")
+    return json.loads(content), data["sha"]  # sha nécessaire pour la mise à jour
+
+def save_historique_to_github(historique, sha):
+    """Sauvegarde l'historique mis à jour sur GitHub."""
+    content = json.dumps(historique, ensure_ascii=False, indent=2)
+    encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+    payload = {
+        "message": f"Historique mis à jour - {datetime.date.today()}",
+        "content": encoded,
+    }
+    if sha:
+        payload["sha"] = sha  # Requis pour mettre à jour un fichier existant
+    r = requests.put(
+        f"https://api.github.com/repos/{REPO}/contents/{HISTORIQUE_FILE}",
+        headers={"Authorization": f"token {GH_TOKEN}"},
+        json=payload
+    )
+    print(f"Historique sauvegardé sur GitHub : {r.status_code}")
+# ──────────────────────────────────────────────────────────────────────────
+
 def refresh_instagram_token(current_token):
     r = requests.get(
         "https://graph.instagram.com/refresh_access_token",
@@ -34,11 +67,9 @@ def refresh_instagram_token(current_token):
         return current_token
     new_token = data["access_token"]
     print("Token rafraichi avec succes !")
-    gh_token = os.environ["GH_TOKEN"]
-    repo = "mystofila/instagram-auto-post"
     pub_r = requests.get(
-        f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
-        headers={"Authorization": f"token {gh_token}"}
+        f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
+        headers={"Authorization": f"token {GH_TOKEN}"}
     )
     pub_data = pub_r.json()
     from nacl import encoding, public
@@ -47,8 +78,8 @@ def refresh_instagram_token(current_token):
     encrypted = sealed_box.encrypt(new_token.encode())
     encrypted_b64 = base64.b64encode(encrypted).decode()
     update_r = requests.put(
-        f"https://api.github.com/repos/{repo}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
-        headers={"Authorization": f"token {gh_token}"},
+        f"https://api.github.com/repos/{REPO}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
+        headers={"Authorization": f"token {GH_TOKEN}"},
         json={"encrypted_value": encrypted_b64, "key_id": pub_data["key_id"]}
     )
     print(f"Secret GitHub mis a jour : {update_r.status_code}")
@@ -56,17 +87,23 @@ def refresh_instagram_token(current_token):
 
 IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 
-# Générer le contenu avec Gemini
+# ── NOUVEAU : Charger l'historique avant la génération ────────────────────
+historique, historique_sha = get_historique_from_github()
+sujets_deja_traites = [h["accroche"] for h in historique[-20:]]  # 20 derniers max
+liste_sujets = "\n".join(f"- {s}" for s in sujets_deja_traites) if sujets_deja_traites else "Aucun pour l'instant."
+# ──────────────────────────────────────────────────────────────────────────
+
 client = genai.Client(api_key=GEMINI_API_KEY)
-
 today = datetime.date.today().strftime("%Y-%m-%d")
-seed = random.randint(1, 9999)
 
+# ── MODIFIÉ : Prompt avec injection de l'historique ───────────────────────
 prompt = f"""Tu es un expert en recrutement et coach carriere francais.
-Aujourd hui c est le {today} et ta graine aleatoire est {seed}.
+Aujourd hui c est le {today}.
 
-Choisis toi-meme un sujet DIFFERENT et ORIGINAL sur la recherche d emploi, le CV, la lettre de motivation ou les entretiens.
-Ne repete jamais un sujet deja traite.
+Voici les sujets que tu as DEJA traites recemment. Tu NE DOIS PAS les repeter ni en choisir un similaire :
+{liste_sujets}
+
+Choisis un sujet COMPLETEMENT DIFFERENT et ORIGINAL sur la recherche d emploi, le CV, la lettre de motivation ou les entretiens.
 
 Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
 {{
@@ -79,6 +116,7 @@ Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
   "cta": "call to action max 30 caracteres sans emoji",
   "caption": "texte Instagram avec 5 hashtags francais max 200 caracteres sans emoji"
 }}"""
+# ──────────────────────────────────────────────────────────────────────────
 
 response = client.models.generate_content(
     model="gemma-3-27b-it",
@@ -93,7 +131,16 @@ if "```" in raw:
 data = json.loads(raw.strip())
 print(f"Contenu genere : {data}")
 
-# Palettes
+# ── NOUVEAU : Sauvegarder le nouveau sujet dans l'historique ──────────────
+historique.append({
+    "date": today,
+    "accroche": data["accroche"]
+})
+historique = historique[-30:]  # Garder les 30 derniers seulement
+save_historique_to_github(historique, historique_sha)
+# ──────────────────────────────────────────────────────────────────────────
+
+# Palettes (inchangé)
 palettes = [
     [(15, 32, 78), (30, 90, 180)],
     [(78, 15, 60), (180, 30, 140)],
@@ -105,7 +152,6 @@ palettes = [
 def create_slide(text_title, text_body, filename, index=1):
     W, H = 1080, 1080
     c1, c2 = palettes[(index + random.randint(0, 4)) % len(palettes)]
-
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
     for y in range(H):
@@ -114,19 +160,16 @@ def create_slide(text_title, text_body, filename, index=1):
         g = int(c1[1] + (c2[1] - c1[1]) * ratio)
         b = int(c1[2] + (c2[2] - c1[2]) * ratio)
         draw.line([(0, y), (W, y)], fill=(r, g, b))
-
     overlay = Image.new("RGB", (W, H), c1)
     mask = Image.new("L", (W, H), 0)
     mask_draw = ImageDraw.Draw(mask)
     mask_draw.polygon([(0, 0), (W//2, 0), (0, H)], fill=120)
     img = Image.composite(overlay, img, mask)
     draw = ImageDraw.Draw(img)
-
     draw.ellipse([800, -100, 1180, 280], outline=(255, 255, 255), width=3)
     draw.ellipse([830, -70, 1150, 250], outline=(255, 255, 255), width=1)
     draw.ellipse([-100, 800, 280, 1180], outline=(255, 255, 255), width=3)
     draw.rectangle([0, 0, 8, H], fill="white")
-
     try:
         font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 76)
         font_body = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 46)
@@ -137,11 +180,9 @@ def create_slide(text_title, text_body, filename, index=1):
         font_body = font_title
         font_small = font_title
         font_brand = font_title
-
     num_text = f"{index} / 5"
     bbox = draw.textbbox((0, 0), num_text, font=font_small)
     draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill="white")
-
     wrapped_title = textwrap.wrap(text_title, width=20, break_long_words=False, break_on_hyphens=False)
     y_pos = 320 if text_body else 430
     for line in wrapped_title:
@@ -149,10 +190,8 @@ def create_slide(text_title, text_body, filename, index=1):
         w = bbox[2] - bbox[0]
         draw.text(((W - w) / 2, y_pos), line, font=font_title, fill="white")
         y_pos += 95
-
     draw.rectangle([(W - 140) / 2, y_pos + 10, (W + 140) / 2, y_pos + 18], fill="white")
     y_pos += 55
-
     if text_body:
         wrapped_body = textwrap.wrap(text_body, width=26)[:5]
         y_pos += 20
@@ -161,33 +200,27 @@ def create_slide(text_title, text_body, filename, index=1):
             w = bbox[2] - bbox[0]
             draw.text(((W - w) / 2, y_pos), line, font=font_body, fill=(200, 220, 255))
             y_pos += 62
-
     draw.rectangle([60, H - 110, W - 60, H - 104], fill="white")
     brand = "@mystofila"
     bbox = draw.textbbox((0, 0), brand, font=font_brand)
     w = bbox[2] - bbox[0]
     draw.text(((W - w) / 2, H - 90), brand, font=font_brand, fill="white")
-
     img.save(filename, quality=95)
     print(f"Slide creee : {filename}")
 
-# Créer les 5 slides
+# Créer les 5 slides (inchangé)
 slides_files = []
-
 create_slide(data["accroche"], "", "slide_1.jpg", 1)
 slides_files.append("slide_1.jpg")
-
 for i, slide in enumerate(data["slides"][:3]):
     fname = f"slide_{i+2}.jpg"
     create_slide(slide["titre"], slide["contenu"], fname, i+2)
     slides_files.append(fname)
-
 create_slide(data["cta"], "Sauvegarde ce post !", "slide_5.jpg", 5)
 slides_files.append("slide_5.jpg")
-
 print(f"Slides creees : {slides_files}")
 
-# Uploader sur Cloudinary
+# Uploader sur Cloudinary (inchangé)
 image_urls = []
 for fname in slides_files:
     result = cloudinary.uploader.upload(fname)
@@ -195,7 +228,7 @@ for fname in slides_files:
     image_urls.append(url)
     print(f"Image uploadee : {url}")
 
-# Publier le carrousel
+# Publier le carrousel (inchangé)
 children_ids = []
 for url in image_urls:
     r = requests.post(
