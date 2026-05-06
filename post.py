@@ -158,7 +158,7 @@ Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
 }}"""
 
 response = client.models.generate_content(
-    model="gemma-3-27b-it",
+    model="gemma-4-26b-a4b-it",
     contents=prompt
 )
 
