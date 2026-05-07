@@ -12,12 +12,13 @@ import cloudinary
 import cloudinary.uploader
 
 # ── Config ─────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-IG_TOKEN       = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-IG_USER_ID     = os.environ["INSTAGRAM_USER_ID"]
-GH_TOKEN       = os.environ["GH_TOKEN"]
-REPO           = "mystofila/instagram-auto-post"
+GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
+IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
+GH_TOKEN        = os.environ["GH_TOKEN"]
+REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique.json"
+GEMINI_MODEL    = "gemini-2.0-flash"
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -117,29 +118,137 @@ def refresh_instagram_token(current_token):
     print(f"Secret GitHub mis a jour : {update_r.status_code}")
     return new_token
 
+# ── Génération Gemini avec retry ────────────────────────────────────────────
+def generate_with_retry(client, model, contents, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return client.models.generate_content(model=model, contents=contents)
+        except Exception as e:
+            err_str = str(e)
+            if "500" in err_str or "INTERNAL" in err_str or "503" in err_str:
+                wait = 15 * (attempt + 1)
+                print(f"Erreur Gemini ({err_str[:60]}), retry dans {wait}s... ({attempt+1}/{max_retries})")
+                time.sleep(wait)
+            else:
+                print(f"Erreur Gemini non récupérable : {err_str}")
+                raise
+    raise Exception(f"Gemini indisponible après {max_retries} tentatives")
+
+# ── Palettes ────────────────────────────────────────────────────────────────
+PALETTES = [
+    [(15, 32, 78),  (30, 90, 180)],
+    [(78, 15, 60),  (180, 30, 140)],
+    [(15, 78, 40),  (30, 180, 90)],
+    [(78, 30, 15),  (200, 80, 20)],
+    [(20, 60, 78),  (30, 160, 180)],
+]
+
+# ── Création des slides ─────────────────────────────────────────────────────
+def create_slide(text_title, text_body, filename, index=1):
+    W, H = 1080, 1080
+    c1, c2 = PALETTES[(index + random.randint(0, 4)) % len(PALETTES)]
+
+    img = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(img)
+
+    # Dégradé vertical
+    for y in range(H):
+        ratio = y / H
+        r = int(c1[0] + (c2[0] - c1[0]) * ratio)
+        g = int(c1[1] + (c2[1] - c1[1]) * ratio)
+        b = int(c1[2] + (c2[2] - c1[2]) * ratio)
+        draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+    # Overlay triangulaire
+    overlay = Image.new("RGB", (W, H), c1)
+    mask = Image.new("L", (W, H), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.polygon([(0, 0), (W // 2, 0), (0, H)], fill=120)
+    img = Image.composite(overlay, img, mask)
+    draw = ImageDraw.Draw(img)
+
+    # Décorations géométriques
+    draw.ellipse([800, -100, 1180, 280], outline=(255, 255, 255), width=3)
+    draw.ellipse([830, -70, 1150, 250],  outline=(255, 255, 255), width=1)
+    draw.ellipse([-100, 800, 280, 1180], outline=(255, 255, 255), width=3)
+    draw.rectangle([0, 0, 8, H], fill="white")
+
+    # Polices
+    try:
+        font_path = "/usr/share/fonts/truetype/dejavu/"
+        font_title = ImageFont.truetype(font_path + "DejaVuSans-Bold.ttf", 76)
+        font_body  = ImageFont.truetype(font_path + "DejaVuSans.ttf", 46)
+        font_small = ImageFont.truetype(font_path + "DejaVuSans.ttf", 32)
+        font_brand = ImageFont.truetype(font_path + "DejaVuSans-Bold.ttf", 36)
+    except Exception:
+        font_title = ImageFont.load_default()
+        font_body  = font_title
+        font_small = font_title
+        font_brand = font_title
+
+    # Numéro de slide
+    num_text = f"{index} / 5"
+    bbox = draw.textbbox((0, 0), num_text, font=font_small)
+    draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill="white")
+
+    # Titre
+    wrapped_title = textwrap.wrap(text_title, width=20, break_long_words=False, break_on_hyphens=False)
+    y_pos = 320 if text_body else 430
+    for line in wrapped_title:
+        bbox = draw.textbbox((0, 0), line, font=font_title)
+        w = bbox[2] - bbox[0]
+        draw.text(((W - w) / 2, y_pos), line, font=font_title, fill="white")
+        y_pos += 95
+
+    # Séparateur
+    draw.rectangle([(W - 140) / 2, y_pos + 10, (W + 140) / 2, y_pos + 18], fill="white")
+    y_pos += 55
+
+    # Corps
+    if text_body:
+        wrapped_body = textwrap.wrap(text_body, width=26)[:5]
+        y_pos += 20
+        for line in wrapped_body:
+            bbox = draw.textbbox((0, 0), line, font=font_body)
+            w = bbox[2] - bbox[0]
+            draw.text(((W - w) / 2, y_pos), line, font=font_body, fill=(200, 220, 255))
+            y_pos += 62
+
+    # Branding
+    draw.rectangle([60, H - 110, W - 60, H - 104], fill="white")
+    brand = "@mystofila"
+    bbox = draw.textbbox((0, 0), brand, font=font_brand)
+    w = bbox[2] - bbox[0]
+    draw.text(((W - w) / 2, H - 90), brand, font=font_brand, fill="white")
+
+    img.save(filename, quality=95)
+    print(f"Slide créée : {filename}")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ── MAIN ───────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 1. Refresh token
 IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 
-# ── Sélection du sujet (file d'attente infinie, sans doublon consécutif) ───
+# 2. Historique & sélection du sujet
 historique, historique_sha = get_historique_from_github()
+today = datetime.date.today().strftime("%Y-%m-%d")
 
 sujets_deja_traites = [h.get("sujet") or h.get("accroche", "") for h in historique]
 sujets_neufs = [s for s in SUJETS if s not in sujets_deja_traites]
 
 if sujets_neufs:
-    # Il reste des sujets jamais traités → on pioche dedans
     sujet_du_jour = random.choice(sujets_neufs)
 else:
-    # Tous les sujets ont été faits au moins une fois
-    # → on reprend le plus ancien (premier de l'historique)
+    # Cycle : reprend le plus ancien
     sujet_du_jour = sujets_deja_traites[0]
-    # On le retire de l'historique pour qu'il repasse comme "neuf"
     historique = [h for h in historique if (h.get("sujet") or h.get("accroche", "")) != sujet_du_jour]
 
 print(f"Sujet choisi : {sujet_du_jour}")
 
-# ── Génération du contenu avec Gemini ──────────────────────────────────────
+# 3. Génération du contenu avec Gemini
 client = genai.Client(api_key=GEMINI_API_KEY)
-today = datetime.date.today().strftime("%Y-%m-%d")
 
 prompt = f"""Tu es un expert en recrutement et coach carriere francais.
 
@@ -157,10 +266,7 @@ Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
   "caption": "texte Instagram avec 5 hashtags francais max 200 caracteres sans emoji"
 }}"""
 
-response = client.models.generate_content(
-    model="gemma-4-26b-a4b-it",
-    contents=prompt
-)
+response = generate_with_retry(client, GEMINI_MODEL, prompt)
 
 raw = response.text.strip()
 if "```" in raw:
@@ -168,95 +274,13 @@ if "```" in raw:
     if raw.startswith("json"):
         raw = raw[4:]
 data = json.loads(raw.strip())
-print(f"Contenu genere : {data}")
+print(f"Contenu généré : {data}")
 
-# ── Sauvegarder le sujet dans l'historique ─────────────────────────────────
-historique.append({
-    "date": today,
-    "sujet": sujet_du_jour
-})
+# 4. Sauvegarde dans l'historique
+historique.append({"date": today, "sujet": sujet_du_jour})
 save_historique_to_github(historique, historique_sha)
 
-# ── Palettes ────────────────────────────────────────────────────────────────
-palettes = [
-    [(15, 32, 78),  (30, 90, 180)],
-    [(78, 15, 60),  (180, 30, 140)],
-    [(15, 78, 40),  (30, 180, 90)],
-    [(78, 30, 15),  (200, 80, 20)],
-    [(20, 60, 78),  (30, 160, 180)],
-]
-
-# ── Création des slides ─────────────────────────────────────────────────────
-def create_slide(text_title, text_body, filename, index=1):
-    W, H = 1080, 1080
-    c1, c2 = palettes[(index + random.randint(0, 4)) % len(palettes)]
-
-    img = Image.new("RGB", (W, H))
-    draw = ImageDraw.Draw(img)
-    for y in range(H):
-        ratio = y / H
-        r = int(c1[0] + (c2[0] - c1[0]) * ratio)
-        g = int(c1[1] + (c2[1] - c1[1]) * ratio)
-        b = int(c1[2] + (c2[2] - c1[2]) * ratio)
-        draw.line([(0, y), (W, y)], fill=(r, g, b))
-
-    overlay = Image.new("RGB", (W, H), c1)
-    mask = Image.new("L", (W, H), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.polygon([(0, 0), (W//2, 0), (0, H)], fill=120)
-    img = Image.composite(overlay, img, mask)
-    draw = ImageDraw.Draw(img)
-
-    draw.ellipse([800, -100, 1180, 280], outline=(255, 255, 255), width=3)
-    draw.ellipse([830, -70, 1150, 250],  outline=(255, 255, 255), width=1)
-    draw.ellipse([-100, 800, 280, 1180], outline=(255, 255, 255), width=3)
-    draw.rectangle([0, 0, 8, H], fill="white")
-
-    try:
-        font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 76)
-        font_body  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 46)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
-        font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
-    except:
-        font_title = ImageFont.load_default()
-        font_body  = font_title
-        font_small = font_title
-        font_brand = font_title
-
-    num_text = f"{index} / 5"
-    bbox = draw.textbbox((0, 0), num_text, font=font_small)
-    draw.text((W - (bbox[2] - bbox[0]) - 50, 45), num_text, font=font_small, fill="white")
-
-    wrapped_title = textwrap.wrap(text_title, width=20, break_long_words=False, break_on_hyphens=False)
-    y_pos = 320 if text_body else 430
-    for line in wrapped_title:
-        bbox = draw.textbbox((0, 0), line, font=font_title)
-        w = bbox[2] - bbox[0]
-        draw.text(((W - w) / 2, y_pos), line, font=font_title, fill="white")
-        y_pos += 95
-
-    draw.rectangle([(W - 140) / 2, y_pos + 10, (W + 140) / 2, y_pos + 18], fill="white")
-    y_pos += 55
-
-    if text_body:
-        wrapped_body = textwrap.wrap(text_body, width=26)[:5]
-        y_pos += 20
-        for line in wrapped_body:
-            bbox = draw.textbbox((0, 0), line, font=font_body)
-            w = bbox[2] - bbox[0]
-            draw.text(((W - w) / 2, y_pos), line, font=font_body, fill=(200, 220, 255))
-            y_pos += 62
-
-    draw.rectangle([60, H - 110, W - 60, H - 104], fill="white")
-    brand = "@mystofila"
-    bbox = draw.textbbox((0, 0), brand, font=font_brand)
-    w = bbox[2] - bbox[0]
-    draw.text(((W - w) / 2, H - 90), brand, font=font_brand, fill="white")
-
-    img.save(filename, quality=95)
-    print(f"Slide creee : {filename}")
-
-# ── Générer les 5 slides ────────────────────────────────────────────────────
+# 5. Création des 5 slides
 slides_files = []
 
 create_slide(data["accroche"], "", "slide_1.jpg", 1)
@@ -270,17 +294,17 @@ for i, slide in enumerate(data["slides"][:3]):
 create_slide(data["cta"], "Sauvegarde ce post !", "slide_5.jpg", 5)
 slides_files.append("slide_5.jpg")
 
-print(f"Slides creees : {slides_files}")
+print(f"Slides créées : {slides_files}")
 
-# ── Upload Cloudinary ───────────────────────────────────────────────────────
+# 6. Upload Cloudinary
 image_urls = []
 for fname in slides_files:
     result = cloudinary.uploader.upload(fname)
     url = result["secure_url"]
     image_urls.append(url)
-    print(f"Image uploadee : {url}")
+    print(f"Image uploadée : {url}")
 
-# ── Publication carrousel Instagram ────────────────────────────────────────
+# 7. Publication carrousel Instagram
 children_ids = []
 for url in image_urls:
     r = requests.post(
@@ -291,8 +315,11 @@ for url in image_urls:
             "access_token": IG_TOKEN
         }
     )
-    children_ids.append(r.json()["id"])
-    print(f"Conteneur enfant : {r.json()}")
+    resp_json = r.json()
+    print(f"Conteneur enfant : {resp_json}")
+    if "id" not in resp_json:
+        raise Exception(f"Echec création conteneur enfant : {resp_json}")
+    children_ids.append(resp_json["id"])
 
 carousel_r = requests.post(
     f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
@@ -303,8 +330,11 @@ carousel_r = requests.post(
         "access_token": IG_TOKEN
     }
 )
-carousel_id = carousel_r.json()["id"]
-print(f"Carrousel cree : {carousel_r.json()}")
+carousel_json = carousel_r.json()
+print(f"Carrousel créé : {carousel_json}")
+if "id" not in carousel_json:
+    raise Exception(f"Echec création carrousel : {carousel_json}")
+carousel_id = carousel_json["id"]
 
 time.sleep(10)
 
