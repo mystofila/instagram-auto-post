@@ -7,18 +7,18 @@ import textwrap
 import base64
 import datetime
 from PIL import Image, ImageDraw, ImageFont
-from google import genai
+from groq import Groq
 import cloudinary
 import cloudinary.uploader
 
 # ── Config ─────────────────────────────────────────────────────────────────
-GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
+GROQ_API_KEY    = os.environ["GROQ_API_KEY"]
 IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique.json"
-GEMINI_MODEL    = "gemini-2.0-flash"
+GROQ_MODEL      = "llama-3.3-70b-versatile"
 
 cloudinary.config(
     cloud_name=os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -118,21 +118,36 @@ def refresh_instagram_token(current_token):
     print(f"Secret GitHub mis a jour : {update_r.status_code}")
     return new_token
 
-# ── Génération Gemini avec retry ────────────────────────────────────────────
-def generate_with_retry(client, model, contents, max_retries=3):
+# ── Génération Groq avec retry ──────────────────────────────────────────────
+def generate_with_retry(client, prompt, max_retries=3):
     for attempt in range(max_retries):
         try:
-            return client.models.generate_content(model=model, contents=contents)
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Tu es un expert en recrutement et coach carriere francais. Tu reponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire, sans texte supplementaire."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=1000,
+            )
+            return response.choices[0].message.content.strip()
         except Exception as e:
             err_str = str(e)
-            if "500" in err_str or "INTERNAL" in err_str or "503" in err_str:
+            if "rate_limit" in err_str.lower() or "503" in err_str or "500" in err_str:
                 wait = 15 * (attempt + 1)
-                print(f"Erreur Gemini ({err_str[:60]}), retry dans {wait}s... ({attempt+1}/{max_retries})")
+                print(f"Erreur Groq ({err_str[:60]}), retry dans {wait}s... ({attempt+1}/{max_retries})")
                 time.sleep(wait)
             else:
-                print(f"Erreur Gemini non récupérable : {err_str}")
+                print(f"Erreur Groq non récupérable : {err_str}")
                 raise
-    raise Exception(f"Gemini indisponible après {max_retries} tentatives")
+    raise Exception(f"Groq indisponible après {max_retries} tentatives")
 
 # ── Palettes ────────────────────────────────────────────────────────────────
 PALETTES = [
@@ -247,12 +262,10 @@ else:
 
 print(f"Sujet choisi : {sujet_du_jour}")
 
-# 3. Génération du contenu avec Gemini
-client = genai.Client(api_key=GEMINI_API_KEY)
+# 3. Génération du contenu avec Groq
+client = Groq(api_key=GROQ_API_KEY)
 
-prompt = f"""Tu es un expert en recrutement et coach carriere francais.
-
-Redige un carrousel Instagram sur ce sujet PRECIS : "{sujet_du_jour}"
+prompt = f"""Redige un carrousel Instagram sur ce sujet PRECIS : "{sujet_du_jour}"
 
 Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
 {{
@@ -266,13 +279,14 @@ Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
   "caption": "texte Instagram avec 5 hashtags francais max 200 caracteres sans emoji"
 }}"""
 
-response = generate_with_retry(client, GEMINI_MODEL, prompt)
+raw = generate_with_retry(client, prompt)
 
-raw = response.text.strip()
+# Nettoyage au cas où le modèle ajouterait des backticks malgré tout
 if "```" in raw:
     raw = raw.split("```")[1]
     if raw.startswith("json"):
         raw = raw[4:]
+
 data = json.loads(raw.strip())
 print(f"Contenu généré : {data}")
 
