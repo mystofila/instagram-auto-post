@@ -127,7 +127,13 @@ def generate_with_retry(client, prompt, max_retries=3):
                 messages=[
                     {
                         "role": "system",
-                        "content": "Tu es un expert en recrutement et coach carriere francais. Tu reponds UNIQUEMENT en JSON valide, sans markdown, sans commentaire, sans texte supplementaire."
+                        "content": (
+                            "Tu es un expert en recrutement et coach carriere francais. "
+                            "Tu reponds UNIQUEMENT en JSON valide, sans markdown, sans backticks, "
+                            "sans commentaire, sans texte supplementaire. "
+                            "Le JSON doit etre sur une seule ligne ou bien formate mais toujours valide. "
+                            "N'utilise jamais d'apostrophes typographiques dans les cles JSON."
+                        )
                     },
                     {
                         "role": "user",
@@ -148,6 +154,53 @@ def generate_with_retry(client, prompt, max_retries=3):
                 print(f"Erreur Groq non récupérable : {err_str}")
                 raise
     raise Exception(f"Groq indisponible après {max_retries} tentatives")
+
+# ── Nettoyage et parsing JSON robuste ──────────────────────────────────────
+def parse_json_robust(raw: str) -> dict:
+    """Tente de parser le JSON même si le modèle a ajouté du bruit autour."""
+    text = raw.strip()
+
+    # Supprimer les blocs markdown ```json ... ``` ou ``` ... ```
+    if "```" in text:
+        parts = text.split("```")
+        # Cherche le premier bloc non vide après ```
+        for part in parts[1:]:
+            cleaned = part.strip()
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:].strip()
+            if cleaned.startswith("{"):
+                text = cleaned
+                break
+
+    # Supprimer tout ce qui précède le premier '{' et suit le dernier '}'
+    start = text.find("{")
+    end   = text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError(f"Aucun objet JSON trouvé dans la réponse : {text[:200]}")
+    text = text[start:end + 1]
+
+    # Remplacer les apostrophes typographiques par des apostrophes droites
+    # (évite les erreurs de décodage dans certaines valeurs)
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"=== JSON BRUT (après nettoyage) ===\n{text}\n=== FIN ===")
+        raise ValueError(f"JSON invalide malgré le nettoyage : {e}") from e
+
+# ── Validation du contenu généré ────────────────────────────────────────────
+def validate_content(data: dict) -> None:
+    required_keys = ["accroche", "slides", "cta", "caption"]
+    for key in required_keys:
+        if key not in data:
+            raise ValueError(f"Clé manquante dans le JSON généré : '{key}'")
+    if not isinstance(data["slides"], list) or len(data["slides"]) < 3:
+        raise ValueError("Le champ 'slides' doit être une liste d'au moins 3 éléments")
+    for i, slide in enumerate(data["slides"][:3]):
+        if "titre" not in slide or "contenu" not in slide:
+            raise ValueError(f"La slide {i+1} est incomplète (titre/contenu manquant)")
 
 # ── Palettes ────────────────────────────────────────────────────────────────
 PALETTES = [
@@ -240,7 +293,7 @@ def create_slide(text_title, text_body, filename, index=1):
     print(f"Slide créée : {filename}")
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ── MAIN ───────────────────────────────────────────────────────────────────
+# ── MAIN ───────────────────────────────────────────────────────────────════
 # ═══════════════════════════════════════════════════════════════════════════
 
 # 1. Refresh token
@@ -267,7 +320,7 @@ client = Groq(api_key=GROQ_API_KEY)
 
 prompt = f"""Redige un carrousel Instagram sur ce sujet PRECIS : "{sujet_du_jour}"
 
-Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
+Reponds UNIQUEMENT en JSON valide sans markdown sans backticks sans commentaire :
 {{
   "accroche": "titre choc max 35 caracteres sans emoji",
   "slides": [
@@ -278,25 +331,26 @@ Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
   "cta": "call to action max 30 caracteres sans emoji",
   "caption": "texte Instagram avec 5 hashtags francais max 200 caracteres sans emoji"
 }}"""
+
+# ── CORRECTION : générer raw D'ABORD, puis l'afficher ──────────────────────
+raw = generate_with_retry(client, prompt)
 print("=== RAW RESPONSE ===")
 print(repr(raw))
 print("=== END RAW ===")
-raw = generate_with_retry(client, prompt)
 
-# Nettoyage au cas où le modèle ajouterait des backticks malgré tout
-if "```" in raw:
-    raw = raw.split("```")[1]
-    if raw.startswith("json"):
-        raw = raw[4:]
+# 4. Parsing JSON robuste
+data = parse_json_robust(raw)
 
-data = json.loads(raw.strip())
+# 5. Validation des clés attendues
+validate_content(data)
+
 print(f"Contenu généré : {data}")
 
-# 4. Sauvegarde dans l'historique
+# 6. Sauvegarde dans l'historique
 historique.append({"date": today, "sujet": sujet_du_jour})
 save_historique_to_github(historique, historique_sha)
 
-# 5. Création des 5 slides
+# 7. Création des 5 slides
 slides_files = []
 
 create_slide(data["accroche"], "", "slide_1.jpg", 1)
@@ -312,7 +366,7 @@ slides_files.append("slide_5.jpg")
 
 print(f"Slides créées : {slides_files}")
 
-# 6. Upload Cloudinary
+# 8. Upload Cloudinary
 image_urls = []
 for fname in slides_files:
     result = cloudinary.uploader.upload(fname)
@@ -320,7 +374,7 @@ for fname in slides_files:
     image_urls.append(url)
     print(f"Image uploadée : {url}")
 
-# 7. Publication carrousel Instagram
+# 9. Publication carrousel Instagram
 children_ids = []
 for url in image_urls:
     r = requests.post(
