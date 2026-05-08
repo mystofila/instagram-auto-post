@@ -278,7 +278,9 @@ Reponds UNIQUEMENT en JSON valide sans markdown sans commentaire :
   "cta": "call to action max 30 caracteres sans emoji",
   "caption": "texte Instagram avec 5 hashtags francais max 200 caracteres sans emoji"
 }}"""
-
+print("=== RAW RESPONSE ===")
+print(repr(raw))
+print("=== END RAW ===")
 raw = generate_with_retry(client, prompt)
 
 # Nettoyage au cas où le modèle ajouterait des backticks malgré tout
