@@ -3,3 +3,4 @@ pillow
 requests
 cloudinary
 pynacl
+cairosvg
