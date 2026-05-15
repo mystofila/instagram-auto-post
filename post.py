@@ -441,8 +441,8 @@ def make_cover(titre: str, illus_type: str, total: int) -> str:
     _arrow_btn(d, SIZE-98, SIZE-98)
     _nav_dots(d, total, 0, SIZE-28)
 
-    path = "/tmp/afder_slide_1.jpg"
-    img.save(path, quality=95)
+    path = "/tmp/afder_slide_1.png"
+    img.save(path, format="PNG")
     return path
 
 
@@ -468,8 +468,8 @@ def make_content(texte: str, slide_idx: int, total: int) -> str:
     d.polygon([(56,SIZE//2-15),(38,SIZE//2),(56,SIZE//2+15)], fill=(148,148,158))
     _nav_dots(d, total, slide_idx-1, SIZE-28)
 
-    path = f"/tmp/afder_slide_{slide_idx}.jpg"
-    img.save(path, quality=95)
+    path = f"/tmp/afder_slide_{slide_idx}.png"
+    img.save(path, format="PNG")
     return path
 
 
@@ -515,8 +515,8 @@ def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
     d.polygon([(56,SIZE//2-15),(38,SIZE//2),(56,SIZE//2+15)], fill=(148,148,158))
     _nav_dots(d, total, total-1, SIZE-28)
 
-    path = f"/tmp/afder_slide_{total}.jpg"
-    img.save(path, quality=95)
+    path = f"/tmp/afder_slide_{total}.png"
+    img.save(path, format="PNG")
     return path
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -620,16 +620,23 @@ print(f"Slides créées : {slides}")
 # 6. Upload Cloudinary
 urls = []
 for path in slides:
-    result = cloudinary.uploader.upload(path, folder="afder_carousel")
+    result = cloudinary.uploader.upload(path, folder="afder_carousel", format="png", resource_type="image", access_mode="public")
     urls.append(result["secure_url"])
     print(f"Upload ✓  {result['secure_url']}")
 
 # 7. Publication Instagram
-child_ids  = [_ig_child(u, IG_TOKEN, IG_USER_ID) for u in urls]
+child_ids = []
+for u in urls:
+    print(f"Container enfant : {u}")
+    cid = _ig_child(u, IG_TOKEN, IG_USER_ID)
+    child_ids.append(cid)
+    print(f"  ✓ {cid}")
+    time.sleep(3)
+
 carousel_id = _ig_carousel(child_ids, data["caption"], IG_TOKEN, IG_USER_ID)
 print(f"Carrousel créé : {carousel_id}")
 
-time.sleep(10)
+time.sleep(15)
 
 pub = _ig_publish(carousel_id, IG_TOKEN, IG_USER_ID)
 print(f"Publication : {pub}")
