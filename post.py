@@ -5,11 +5,32 @@ Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déb
 Slides: 1080x1080px PNG — Open Sans ExtraBold
 """
 
-import os, re, json, math, time, random, base64, datetime, requests, io
+import os, re, json, math, time, random, base64, datetime, requests, io, subprocess, sys
+
+# Auto-install des dépendances manquantes
+def _install(pkg):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
+
+from svglib.svglib import svg2rlg
+from reportlab.graphics import renderPM
+
+try:
+    import cloudinary
+    import cloudinary.uploader
+except ImportError:
+    print("Installation de cloudinary...")
+    _install("cloudinary")
+    import cloudinary
+    import cloudinary.uploader
+
+try:
+    from groq import Groq
+except ImportError:
+    print("Installation de groq...")
+    _install("groq")
+    from groq import Groq
+
 from PIL import Image, ImageDraw, ImageFont
-import cairosvg
-import cloudinary, cloudinary.uploader
-from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 GROQ_API_KEY    = os.environ["GROQ_API_KEY"]
@@ -126,7 +147,14 @@ def refresh_instagram_token(token):
 
 SYSTEM_PROMPT = """Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
 Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, sans markdown, sans backticks.
-Le champ svg contient un SVG cartoon flat design coloré inline.
+
+LANGUE : Tout le texte (accroche, slides, cta, cta_sous, caption) doit être en FRANÇAIS CORRECT.
+Zéro mot anglais. Orthographe et grammaire parfaites. Accents obligatoires (é, è, ê, à, ç, etc.).
+
+TITRE (accroche) : maximum 5 MOTS en français, majuscules, percutant, sans anglais.
+Exemples valides : "LA HONTE N'EST PAS UNE FATALITÉ", "TU N'ES PAS SEUL DANS CE COMBAT"
+Exemples INTERDITS : "MENTAL HEALTH", "RECOVERY", "SELF-CARE", tout mot anglais.
+
 Règles SVG absolues :
 - Commence par : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
 - Termine par : </svg>
@@ -142,7 +170,7 @@ def generate_with_retry(client, sujet, max_retries=3):
     prompt = f"""Crée un carrousel Instagram pour @afder.recovery sur : "{sujet}"
 
 Réponds avec ce JSON sur UNE SEULE LIGNE (le svg ne doit pas contenir de retours à la ligne) :
-{{"accroche":"TITRE MAJUSCULES max 32 chars","slides":[{{"contenu":"2-3 phrases bienveillantes max 190 chars tutoiement"}},{{"contenu":"Suite concrète max 190 chars"}}],"cta":"CTA MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante max 80 chars","caption":"texte Instagram 5 hashtags max 190 chars","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 500 500\\">ILLUSTRATION CARTOON</svg>"}}
+{{"accroche":"TITRE EN FRANÇAIS MAX 5 MOTS MAJUSCULES SANS ANGLAIS","slides":[{{"contenu":"2-3 phrases bienveillantes max 190 chars tutoiement"}},{{"contenu":"Suite concrète max 190 chars"}}],"cta":"CTA MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante max 80 chars","caption":"texte Instagram 5 hashtags max 190 chars","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 500 500\\">ILLUSTRATION CARTOON</svg>"}}
 
 Le SVG illustre le thème "{sujet}" avec des personnages expressifs, flat design cartoon coloré."""
 
@@ -211,6 +239,19 @@ def parse_groq_response(raw: str) -> dict:
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
         raise ValueError("'slides' doit avoir au moins 2 éléments")
 
+    # Vérification titre : max 5 mots, pas de mots anglais courants
+    MOTS_ANGLAIS = {"mental","health","recovery","self","care","love","mind","brain",
+                    "body","soul","help","support","heal","feel","life","free","hope",
+                    "strong","safe","okay","well","good","bad","you","your","we","our"}
+    accroche = data.get("accroche","")
+    mots = accroche.split()
+    if len(mots) > 6:
+        print(f"⚠ Titre trop long ({len(mots)} mots) : {accroche!r} → tronqué")
+        data["accroche"] = " ".join(mots[:5])
+    mots_en = [m for m in mots if m.lower().strip(".,!?") in MOTS_ANGLAIS]
+    if mots_en:
+        print(f"⚠ Mots anglais détectés dans le titre : {mots_en}")
+
     return data
 
 
@@ -221,7 +262,7 @@ def get_valid_svg(data: dict, sujet: str) -> str:
         svg = m.group(0) if m else ""
     if svg:
         try:
-            cairosvg.svg2png(bytestring=svg.encode(), output_width=50, output_height=50)
+            _svg_to_pil(svg, 50)  # validation via svglib
             print(f"SVG Groq valide ✓ ({len(svg)} chars)")
             return svg
         except Exception as ex:
@@ -419,20 +460,26 @@ def _heart_shape(draw, cx, cy, sz, color):
     draw.polygon(pts, fill=color)
 
 def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
-    # Forcer viewBox si absent
+    """Convertit SVG en PIL Image. Utilise svglib, sans dependance systeme."""
+    import tempfile, os
     svg = svg_str.strip()
     if 'viewBox' not in svg:
         svg = svg.replace('<svg ', '<svg viewBox="0 0 500 500" ', 1)
-    png = cairosvg.svg2png(bytestring=svg.encode(), output_width=px, output_height=px)
-    img = Image.open(io.BytesIO(png)).convert("RGBA")
-    # Resize de sécurité si cairosvg a ignoré les dimensions
+    with tempfile.NamedTemporaryFile(suffix=".svg", mode="w", delete=False, encoding="utf-8") as f:
+        f.write(svg)
+        tmp = f.name
+    try:
+        drawing = svg2rlg(tmp)
+        if drawing is None:
+            raise ValueError("SVG non parsable par svglib")
+        png_data = renderPM.drawToString(drawing, fmt="PNG", dpi=96)
+        img = Image.open(io.BytesIO(png_data)).convert("RGBA")
+    finally:
+        os.unlink(tmp)
     if img.size != (px, px):
         img = img.resize((px, px), Image.LANCZOS)
     return img
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — CRÉATION DES SLIDES
-# ═══════════════════════════════════════════════════════════════════════════════
 
 def make_cover(titre: str, svg: str, total: int) -> str:
     """
