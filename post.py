@@ -5,32 +5,11 @@ Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déb
 Slides: 1080x1080px PNG — Open Sans ExtraBold
 """
 
-import os, re, json, math, time, random, base64, datetime, requests, io, subprocess, sys
-
-# Auto-install des dépendances manquantes
-def _install(pkg):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
-
-from svglib.svglib import svg2rlg
-from reportlab.graphics import renderPM
-
-try:
-    import cloudinary
-    import cloudinary.uploader
-except ImportError:
-    print("Installation de cloudinary...")
-    _install("cloudinary")
-    import cloudinary
-    import cloudinary.uploader
-
-try:
-    from groq import Groq
-except ImportError:
-    print("Installation de groq...")
-    _install("groq")
-    from groq import Groq
-
+import os, re, json, math, time, random, base64, datetime, requests, io
 from PIL import Image, ImageDraw, ImageFont
+import cairosvg
+import cloudinary, cloudinary.uploader
+from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 GROQ_API_KEY    = os.environ["GROQ_API_KEY"]
@@ -69,12 +48,12 @@ SIZE       = 1080
 # ── Sujets ─────────────────────────────────────────────────────────────────────
 SUJETS = [
     "La co-dépendance, c'est quoi ?",
-    "Rechute ≠ échec : ce que disent les neurosciences",
+    "Rechute et échec : ce que disent les neurosciences",
     "La honte en addiction : comment s'en libérer",
     "Pair-aidance : pourquoi l'expérience vécue change tout",
     "Frontières saines : c'est quoi et comment les poser",
-    "Santé mentale & addiction : le lien invisible",
-    "Famille & addiction : briser le silence",
+    "Santé mentale et addiction : le lien invisible",
+    "Famille et addiction : briser le silence",
     "Le rétablissement n'est pas linéaire — et c'est normal",
     "Les signes que tu prends soin de toi malgré tout",
     "Codépendance : quand aider devient épuisant",
@@ -148,19 +127,19 @@ def refresh_instagram_token(token):
 SYSTEM_PROMPT = """Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
 Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, sans markdown, sans backticks.
 
-LANGUE : Tout le texte (accroche, slides, cta, cta_sous, caption) doit être en FRANÇAIS CORRECT.
-Zéro mot anglais. Orthographe et grammaire parfaites. Accents obligatoires (é, è, ê, à, ç, etc.).
+LANGUE : Tout le texte doit être en FRANÇAIS CORRECT avec accents (é,è,ê,à,ç).
+Zéro mot anglais. Orthographe et grammaire parfaites.
 
-TITRE (accroche) : maximum 5 MOTS en français, majuscules, percutant, sans anglais.
-Exemples valides : "LA HONTE N'EST PAS UNE FATALITÉ", "TU N'ES PAS SEUL DANS CE COMBAT"
-Exemples INTERDITS : "MENTAL HEALTH", "RECOVERY", "SELF-CARE", tout mot anglais.
+TITRE (accroche) : maximum 5 MOTS en français, majuscules, percutant.
+Exemples valides : "LA HONTE N'EST PAS UNE FATALITÉ", "TU N'ES PAS SEUL"
+Exemples INTERDITS : tout mot anglais comme MENTAL, HEALTH, RECOVERY, SELF, CARE.
 
 Règles SVG absolues :
 - Commence par : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
 - Termine par : </svg>
 - Utilise UNIQUEMENT : circle, ellipse, rect, path, line, polygon, g
 - INTERDIT : text, image, use, symbol, defs, filter, style, script
-- Fond obligatoire : cercle <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
+- Fond obligatoire : <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
 - Personnages cartoon : têtes rondes, yeux ronds noirs, sourires, joues roses
 - Couleurs peaux #FBBF8A ou #C68642, vêtements colorés vifs
 - Étoiles décoratives #FCD34D
@@ -169,10 +148,10 @@ Règles SVG absolues :
 def generate_with_retry(client, sujet, max_retries=3):
     prompt = f"""Crée un carrousel Instagram pour @afder.recovery sur : "{sujet}"
 
-Réponds avec ce JSON sur UNE SEULE LIGNE (le svg ne doit pas contenir de retours à la ligne) :
-{{"accroche":"TITRE EN FRANÇAIS MAX 5 MOTS MAJUSCULES SANS ANGLAIS","slides":[{{"contenu":"2-3 phrases bienveillantes max 190 chars tutoiement"}},{{"contenu":"Suite concrète max 190 chars"}}],"cta":"CTA MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante max 80 chars","caption":"texte Instagram 5 hashtags max 190 chars","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 500 500\\">ILLUSTRATION CARTOON</svg>"}}
+Réponds avec ce JSON sur UNE SEULE LIGNE (le svg sans retours à la ligne) :
+{{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES SANS MOT ANGLAIS","slides":[{{"contenu":"2-3 phrases bienveillantes max 190 chars tutoiement"}},{{"contenu":"Suite concrète max 190 chars"}}],"cta":"CTA FRANÇAIS MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante française max 80 chars","caption":"texte Instagram français 5 hashtags max 190 chars","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 500 500\\">ILLUSTRATION CARTOON COLORÉE</svg>"}}
 
-Le SVG illustre le thème "{sujet}" avec des personnages expressifs, flat design cartoon coloré."""
+Le SVG illustre "{sujet}" avec personnages expressifs flat design cartoon."""
 
     for attempt in range(max_retries):
         try:
@@ -210,7 +189,6 @@ def parse_groq_response(raw: str) -> dict:
     text = text.replace("\u2019","'").replace("\u2018","'")
     text = text.replace("\u201c",'"').replace("\u201d",'"')
 
-    # Extraire le SVG avant parsing JSON
     svg_extracted = ""
     svg_match = re.search(r'"svg"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
     if svg_match:
@@ -239,11 +217,11 @@ def parse_groq_response(raw: str) -> dict:
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
         raise ValueError("'slides' doit avoir au moins 2 éléments")
 
-    # Vérification titre : max 5 mots, pas de mots anglais courants
+    # Vérification titre : max 5 mots, alerte si mot anglais
     MOTS_ANGLAIS = {"mental","health","recovery","self","care","love","mind","brain",
                     "body","soul","help","support","heal","feel","life","free","hope",
                     "strong","safe","okay","well","good","bad","you","your","we","our"}
-    accroche = data.get("accroche","")
+    accroche = data.get("accroche", "")
     mots = accroche.split()
     if len(mots) > 6:
         print(f"⚠ Titre trop long ({len(mots)} mots) : {accroche!r} → tronqué")
@@ -262,16 +240,16 @@ def get_valid_svg(data: dict, sujet: str) -> str:
         svg = m.group(0) if m else ""
     if svg:
         try:
-            _svg_to_pil(svg, 50)  # validation via svglib
+            cairosvg.svg2png(bytestring=svg.encode(), output_width=50, output_height=50)
             print(f"SVG Groq valide ✓ ({len(svg)} chars)")
             return svg
         except Exception as ex:
             print(f"SVG Groq invalide ({ex}) → fallback")
 
     s = sujet.lower()
-    if any(w in s for w in ["famille","parent","enfant","proche"]):   return SVG_FAMILY
-    if any(w in s for w in ["cerveau","neuro","rechute","science"]):  return SVG_BRAIN
-    if any(w in s for w in ["honte","identité","miroir","estime"]):   return SVG_MIRROR
+    if any(w in s for w in ["famille","parent","enfant","proche"]):    return SVG_FAMILY
+    if any(w in s for w in ["cerveau","neuro","rechute","science"]):   return SVG_BRAIN
+    if any(w in s for w in ["honte","identité","miroir","estime"]):    return SVG_MIRROR
     if any(w in s for w in ["arbre","croissance","chemin","rétabli"]): return SVG_TREE
     return SVG_PEOPLE
 
@@ -309,31 +287,27 @@ SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <g transform="translate(78,388)"><path d="M0,-14 L3.5,-3.5 L14,0 L3.5,3.5 L0,14 L-3.5,3.5 L-14,0 L-3.5,-3.5 Z" fill="#FCD34D"/></g>
 </svg>"""
 
-SVG_BRAIN = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 420">
-  <ellipse cx="252" cy="395" rx="155" ry="18" fill="#FECACA" opacity="0.4"/>
-  <path d="M250 335 C180 335 120 305 95 260 C70 215 75 160 100 130 C120 105 148 95 165 103 C168 80 182 63 200 60 C215 57 228 65 235 77 C240 63 252 53 265 53Z" fill="#FF8FAB"/>
-  <path d="M250 335 C320 335 380 305 405 260 C430 215 425 160 400 130 C380 105 352 95 335 103 C332 80 318 63 300 60 C285 57 272 65 265 77 C260 63 248 53 235 53Z" fill="#FF8FAB"/>
-  <path d="M250 335 L250 53" stroke="#FF6B8A" stroke-width="5" stroke-linecap="round"/>
-  <path d="M115 175 Q145 157 170 173 Q195 189 180 210" fill="none" stroke="#FF6B8A" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M100 225 Q133 205 160 223 Q187 241 168 263" fill="none" stroke="#FF6B8A" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M385 175 Q355 157 330 173 Q305 189 320 210" fill="none" stroke="#FF6B8A" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M400 225 Q367 205 340 223 Q313 241 332 263" fill="none" stroke="#FF6B8A" stroke-width="4.5" stroke-linecap="round"/>
-  <path d="M118 195 Q250 173 382 195 Q382 225 250 213 Q118 225 118 195Z" fill="#C7D2FE" opacity="0.85"/>
-  <ellipse cx="178" cy="255" rx="22" ry="22" fill="white"/>
-  <circle cx="178" cy="259" r="13" fill="#2D2D2D"/>
-  <circle cx="183" cy="254" r="5" fill="white"/>
-  <ellipse cx="322" cy="255" rx="22" ry="22" fill="white"/>
-  <circle cx="322" cy="259" r="13" fill="#2D2D2D"/>
-  <circle cx="327" cy="254" r="5" fill="white"/>
-  <path d="M205 292 Q250 315 295 292" stroke="#2D2D2D" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="148" cy="287" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
-  <ellipse cx="352" cy="287" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
-  <path d="M120 287 Q88 292 78 315" stroke="#FF8FAB" stroke-width="18" stroke-linecap="round" fill="none"/>
-  <ellipse cx="74" cy="323" rx="16" ry="12" fill="#FF8FAB"/>
-  <path d="M380 287 Q412 292 422 315" stroke="#FF8FAB" stroke-width="18" stroke-linecap="round" fill="none"/>
-  <ellipse cx="426" cy="323" rx="16" ry="12" fill="#FF8FAB"/>
-  <g transform="translate(405,62)"><path d="M0,-28 L7,-7 L28,0 L7,7 L0,28 L-7,7 L-28,0 L-7,-7 Z" fill="#FCD34D"/></g>
-  <g transform="translate(72,352)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
+SVG_BRAIN = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
+  <path d="M250 390 C180 390 115 355 90 300 C65 245 70 180 100 145 C122 118 152 108 170 116 C173 90 188 72 207 68 C223 65 237 74 244 88 C249 72 262 62 276 62Z" fill="#FF8FAB"/>
+  <path d="M250 390 C320 390 385 355 410 300 C435 245 430 180 400 145 C378 118 348 108 330 116 C327 90 312 72 293 68 C277 65 263 74 256 88 C251 72 238 62 224 62Z" fill="#FF8FAB"/>
+  <path d="M250 390 L250 62" stroke="#FF6B8A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M110 195 Q142 175 168 193 Q194 211 178 234" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M96 248 Q130 226 158 246 Q186 266 166 290" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M390 195 Q358 175 332 193 Q306 211 322 234" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M404 248 Q370 226 342 246 Q314 266 334 290" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M112 218 Q250 195 388 218 Q388 250 250 236 Q112 250 112 218Z" fill="#C7D2FE" opacity="0.85"/>
+  <ellipse cx="178" cy="298" rx="22" ry="22" fill="white"/>
+  <circle cx="178" cy="302" r="13" fill="#2D2D2D"/>
+  <circle cx="183" cy="297" r="5" fill="white"/>
+  <ellipse cx="322" cy="298" rx="22" ry="22" fill="white"/>
+  <circle cx="322" cy="302" r="13" fill="#2D2D2D"/>
+  <circle cx="327" cy="297" r="5" fill="white"/>
+  <path d="M205 335 Q250 358 295 335" stroke="#2D2D2D" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <ellipse cx="148" cy="330" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
+  <ellipse cx="352" cy="330" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
+  <g transform="translate(410,95)"><path d="M0,-26 L6.5,-6.5 L26,0 L6.5,6.5 L0,26 L-6.5,6.5 L-26,0 L-6.5,-6.5 Z" fill="#FCD34D"/></g>
+  <g transform="translate(75,400)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
@@ -460,34 +434,20 @@ def _heart_shape(draw, cx, cy, sz, color):
     draw.polygon(pts, fill=color)
 
 def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
-    """Convertit SVG en PIL Image. Utilise svglib, sans dependance systeme."""
-    import tempfile, os
     svg = svg_str.strip()
     if 'viewBox' not in svg:
         svg = svg.replace('<svg ', '<svg viewBox="0 0 500 500" ', 1)
-    with tempfile.NamedTemporaryFile(suffix=".svg", mode="w", delete=False, encoding="utf-8") as f:
-        f.write(svg)
-        tmp = f.name
-    try:
-        drawing = svg2rlg(tmp)
-        if drawing is None:
-            raise ValueError("SVG non parsable par svglib")
-        png_data = renderPM.drawToString(drawing, fmt="PNG", dpi=96)
-        img = Image.open(io.BytesIO(png_data)).convert("RGBA")
-    finally:
-        os.unlink(tmp)
+    png = cairosvg.svg2png(bytestring=svg.encode(), output_width=px, output_height=px)
+    img = Image.open(io.BytesIO(png)).convert("RGBA")
     if img.size != (px, px):
         img = img.resize((px, px), Image.LANCZOS)
     return img
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 6 — CRÉATION DES SLIDES
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def make_cover(titre: str, svg: str, total: int) -> str:
-    """
-    Zones strictes — rien ne déborde jamais :
-      TITRE : y=55  → y=400  (police réduite si titre long)
-      ILLUS : y=415 → y=950  (SVG figé à 380px max, centré)
-      NAV   : y=950 → y=1080
-    """
     ILLUS_SIZE = 380
     TITRE_Y1, TITRE_Y2 = 55, 400
     ILLUS_Y1, ILLUS_Y2 = 415, 950
@@ -496,14 +456,11 @@ def make_cover(titre: str, svg: str, total: int) -> str:
     img = _blob(img, SIZE-30, SIZE//2+60, 340,420, (188,200,215), alpha=65)
     img = _blob(img, -20,     SIZE-50,   160,160, (190,205,215), alpha=40)
 
-    # Illustration — taille fixe 380px, centrée dans sa zone
     illus = _svg_to_pil(svg, ILLUS_SIZE)
-    zone_h = ILLUS_Y2 - ILLUS_Y1
     ix = (SIZE - ILLUS_SIZE) // 2
-    iy = ILLUS_Y1 + (zone_h - ILLUS_SIZE) // 2
+    iy = ILLUS_Y1 + (ILLUS_Y2 - ILLUS_Y1 - ILLUS_SIZE) // 2
     img.paste(illus, (ix, iy), illus)
 
-    # Titre — police adaptative pour tenir dans la zone
     d = ImageDraw.Draw(img)
     margin = 55
     max_w  = SIZE - margin * 2
@@ -589,20 +546,24 @@ def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
 
     f_cta = F("OpenSans-ExtraBold.ttf", 106)
     lines = _wrap(d, cta_titre, f_cta, SIZE-130)
-    if len(lines)>2: f_cta=F("OpenSans-ExtraBold.ttf",88); lines=_wrap(d,cta_titre,f_cta,SIZE-130)
+    if len(lines)>2:
+        f_cta=F("OpenSans-ExtraBold.ttf",88)
+        lines=_wrap(d,cta_titre,f_cta,SIZE-130)
     y=255
     for line in lines:
         bb=d.textbbox((0,0),line,font=f_cta)
         d.text(((SIZE-(bb[2]-bb[0]))//2,y),line,font=f_cta,fill=DARK)
         y+=int(f_cta.size*1.08)
 
-    y+=34; f_sub=F("OpenSans-Regular.ttf",50)
+    y+=34
+    f_sub=F("OpenSans-Regular.ttf",50)
     for line in _wrap(d,cta_sous,f_sub,SIZE-175):
         bb=d.textbbox((0,0),line,font=f_sub)
         d.text(((SIZE-(bb[2]-bb[0]))//2,y),line,font=f_sub,fill=MID_GREY)
         y+=int(f_sub.size*1.48)
 
-    f_h=F("OpenSans-Semibold.ttf",46); handle="@AFDER.RECOVERY"
+    f_h=F("OpenSans-Semibold.ttf",46)
+    handle="@AFDER.RECOVERY"
     bb=d.textbbox((0,0),handle,font=f_h)
     d.text(((SIZE-(bb[2]-bb[0]))//2,SIZE-130),handle,font=f_h,fill=DARK)
     _sep(d,SIZE-172)
@@ -646,10 +607,8 @@ def ig_publish(cid):
 # SECTION 8 — MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# 1. Refresh token
 IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 
-# 2. Sélection sujet anti-doublon
 hist, hist_sha = get_historique()
 today    = datetime.date.today().strftime("%Y-%m-%d")
 deja_vus = [h.get("sujet","") for h in hist]
@@ -657,7 +616,6 @@ neufs    = [s for s in SUJETS if s not in deja_vus]
 sujet    = random.choice(neufs) if neufs else deja_vus[0]
 print(f"Sujet : {sujet}")
 
-# 3. Groq — texte + SVG
 client = Groq(api_key=GROQ_API_KEY)
 print("Génération Groq…")
 raw  = generate_with_retry(client, sujet)
@@ -666,11 +624,9 @@ svg  = get_valid_svg(data, sujet)
 print(f"Titre : {data['accroche']}")
 print(f"SVG   : {len(svg)} chars")
 
-# 4. Historique
 hist.append({"date": today, "sujet": sujet})
 save_historique(hist, hist_sha)
 
-# 5. Slides
 total  = 4
 slides = [
     make_cover(data["accroche"], svg, total),
@@ -680,7 +636,6 @@ slides = [
 ]
 print(f"Slides : {slides}")
 
-# 6. Upload Cloudinary en PNG
 urls = []
 for path in slides:
     res = cloudinary.uploader.upload(
@@ -693,7 +648,6 @@ for path in slides:
     urls.append(res["secure_url"])
     print(f"Upload ✓  {res['secure_url']}")
 
-# 7. Publier Instagram (pause entre chaque container)
 child_ids = []
 for u in urls:
     print(f"Container : {u}")
