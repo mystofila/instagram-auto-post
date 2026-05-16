@@ -11,14 +11,33 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install system dependencies
-        run: sudo apt-get install -y fonts-noto-color-emoji
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            fonts-noto-color-emoji \
+            fonts-open-sans \
+            libcairo2-dev \
+            libffi-dev \
+            pkg-config
+
       - name: Install Python dependencies
-        run: pip install groq requests Pillow cloudinary cryptography pynacl
+        run: |
+          pip install \
+            groq \
+            requests \
+            Pillow \
+            cloudinary \
+            cryptography \
+            pynacl \
+            cairosvg
+
       - name: Run post script
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
