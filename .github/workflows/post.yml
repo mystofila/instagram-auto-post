@@ -51,6 +51,7 @@ jobs:
             cairosvg \
             google-genai \
             "moviepy==1.0.3" \
+            together \
             numpy
 
       - name: Déterminer le type de publication
@@ -95,6 +96,7 @@ jobs:
           CLOUDINARY_API_KEY:     ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET:  ${{ secrets.CLOUDINARY_API_SECRET }}
           GH_TOKEN:               ${{ secrets.GH_TOKEN }}
+          TOGETHER_API_KEY:       ${{ secrets.TOGETHER_API_KEY }}
         run: python post.py
 
       - name: Publier le Reel
