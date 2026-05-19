@@ -12,7 +12,8 @@ import cloudinary, cloudinary.uploader
 from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-GROQ_API_KEY    = os.environ["GROQ_API_KEY"]
+GROQ_API_KEY     = os.environ["GROQ_API_KEY"]
+TOGETHER_API_KEY = os.environ["TOGETHER_API_KEY"]
 IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
@@ -447,7 +448,95 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
 # SECTION 6 — CRÉATION DES SLIDES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def make_cover(titre: str, svg: str, total: int) -> str:
+def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
+    """Génère l'illustration cover via Together.ai FLUX.1-schnell."""
+    prompt = (
+        f"Minimal modern editorial illustration, theme: {sujet}. "
+        "Single abstract human figure, neutral posture, subtle sense of struggle "
+        "without dramatization, no facial expression, no smile, no cartoon style. "
+        "Soft muted tones, calm neutral background, clean composition with strong "
+        "negative space for typography overlay. Professional public health style, "
+        "restrained emotional tone, focus on resilience and continuity. "
+        "Soft lighting, simple shapes, hybrid flat-to-soft 3D aesthetic, "
+        "centered subject, no text, no symbols, no exaggerated emotion. "
+        "Instagram carousel cover, prevention and awareness campaign."
+    )
+    resp = requests.post(
+        "https://api.together.xyz/v1/images/generations",
+        headers={
+            "Authorization": f"Bearer {TOGETHER_API_KEY}",
+            "Content-Type":  "application/json",
+        },
+        json={
+            "model":  "black-forest-labs/FLUX.1-schnell",
+            "prompt": prompt,
+            "width":  1024,
+            "height": 1024,
+            "steps":  4,
+            "n":      1,
+            "response_format": "b64_json",
+        },
+        timeout=90,
+    )
+    resp.raise_for_status()
+    b64 = resp.json()["data"][0]["b64_json"]
+    img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    return img.resize((SIZE, SIZE), Image.LANCZOS)
+
+
+def make_cover(titre: str, sujet: str, total: int) -> str:
+    """
+    Slide cover :
+      ILLUS  : image Together.ai plein fond (1080x1080)
+      OVERLAY: rectangle semi-transparent en bas pour lisibilité
+      TITRE  : texte blanc bold en bas sur l'overlay
+      NAV    : séparateur + bouton + dots
+    """
+    # Image générée par IA
+    try:
+        bg_img = fetch_cover_image(titre, sujet)
+        print("Image Together.ai ✓")
+    except Exception as e:
+        print(f"Together.ai indisponible ({e}) → fond dégradé")
+        bg_img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
+
+    img = bg_img.copy()
+    d   = ImageDraw.Draw(img)
+
+    # Overlay gradient sombre en bas pour le titre
+    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    od = ImageDraw.Draw(overlay)
+    for i in range(520):
+        alpha = int((i/520)**1.5 * 195)
+        od.line([(0, SIZE-520+i),(SIZE, SIZE-520+i)], fill=(0,0,0,alpha))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    d   = ImageDraw.Draw(img)
+
+    # Titre blanc — police adaptative
+    margin = 55
+    max_w  = SIZE - margin * 2
+    f, lines = None, []
+    for font_size in [100, 86, 72, 60, 50]:
+        f     = F("OpenSans-ExtraBold.ttf", font_size)
+        lines = _wrap(d, titre.upper(), f, max_w)
+        if len(lines) <= 3:
+            break
+
+    # Positionner le titre dans la zone overlay (bas de slide)
+    bloc_h = len(lines) * int(f.size * 1.1)
+    y = SIZE - 160 - bloc_h
+    for line in lines:
+        # Ombre légère
+        d.text((margin+3, y+3), line, font=f, fill=(0,0,0,160))
+        d.text((margin,   y),   line, font=f, fill=(255,255,255,255))
+        y += int(f.size * 1.1)
+
+    _sep(d)
+    _arrow_btn(d, SIZE-100, SIZE-100)
+    _nav_dots(d, total, 0)
+    path = "/tmp/afder_slide_1.png"
+    img.save(path, format="PNG")
+    return path
     ILLUS_SIZE = 380
     TITRE_Y1, TITRE_Y2 = 55, 400
     ILLUS_Y1, ILLUS_Y2 = 415, 950
@@ -620,16 +709,14 @@ client = Groq(api_key=GROQ_API_KEY)
 print("Génération Groq…")
 raw  = generate_with_retry(client, sujet)
 data = parse_groq_response(raw)
-svg  = get_valid_svg(data, sujet)
 print(f"Titre : {data['accroche']}")
-print(f"SVG   : {len(svg)} chars")
 
 hist.append({"date": today, "sujet": sujet})
 save_historique(hist, hist_sha)
 
 total  = 4
 slides = [
-    make_cover(data["accroche"], svg, total),
+    make_cover(data["accroche"], sujet, total),
     make_content(data["slides"][0]["contenu"], 2, total),
     make_content(data["slides"][1]["contenu"], 3, total),
     make_cta(data["cta"], data["cta_sous"], total),
