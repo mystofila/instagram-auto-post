@@ -2,105 +2,67 @@ name: AFDER — Carrousel & Reels Instagram
 
 on:
   schedule:
-    # Carrousel tous les jours à 9h42 (UTC)
-    - cron: '42 9 * * *'
-    # Reels : lundi, mercredi, vendredi à 12h00 (UTC)
-    - cron: '0 12 * * 1,3,5'
+    - cron: '42 9 * * *'      # Carrousel — tous les jours 9h42 UTC
+    - cron: '0 12 * * 1,3,5'  # Reels — lun/mer/ven 12h00 UTC
   workflow_dispatch:
-    inputs:
-      force_type:
-        description: 'Forcer : carousel | reel | les deux'
-        required: false
-        default: 'auto'
 
 jobs:
-  post:
+
+  # ── CARROUSEL : tous les jours ──────────────────────────────────────────────
+  carrousel:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '42 9 * * *'
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
+      - name: System dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y \
-            fonts-noto-color-emoji \
-            fonts-open-sans \
-            libcairo2-dev \
-            libffi-dev \
-            pkg-config \
-            ffmpeg
+          sudo apt-get install -y fonts-open-sans libcairo2-dev libffi-dev pkg-config
 
-      - name: Install Python dependencies
+      - name: Python dependencies
         run: |
-          pip install \
-            groq \
-            requests \
-            Pillow \
-            cloudinary \
-            cryptography \
-            pynacl \
-            cairosvg \
-            google-genai \
-            "moviepy==1.0.3" \
-            together \
-            numpy
-
-      - name: Déterminer le type de publication
-        id: type
-        run: |
-          FORCE="${{ github.event.inputs.force_type }}"
-          HOUR=$(date +%H)
-          DAY=$(date +%u)
-
-          if [ "$FORCE" = "carousel" ]; then
-            echo "run_carousel=true"  >> $GITHUB_OUTPUT
-            echo "run_reel=false"     >> $GITHUB_OUTPUT
-          elif [ "$FORCE" = "reel" ]; then
-            echo "run_carousel=false" >> $GITHUB_OUTPUT
-            echo "run_reel=true"      >> $GITHUB_OUTPUT
-          elif [ "$FORCE" = "les deux" ]; then
-            echo "run_carousel=true"  >> $GITHUB_OUTPUT
-            echo "run_reel=true"      >> $GITHUB_OUTPUT
-          else
-            # Carrousel = cron 09h42
-            if [ "$HOUR" = "09" ] || [ "$HOUR" = "10" ]; then
-              echo "run_carousel=true" >> $GITHUB_OUTPUT
-            else
-              echo "run_carousel=false" >> $GITHUB_OUTPUT
-            fi
-            # Reel = cron 12h00 lun/mer/ven
-            if { [ "$DAY" = "1" ] || [ "$DAY" = "3" ] || [ "$DAY" = "5" ]; } && \
-               { [ "$HOUR" = "12" ] || [ "$HOUR" = "13" ]; }; then
-              echo "run_reel=true"  >> $GITHUB_OUTPUT
-            else
-              echo "run_reel=false" >> $GITHUB_OUTPUT
-            fi
-          fi
+          pip install groq requests Pillow cloudinary cryptography pynacl cairosvg together
 
       - name: Publier le carrousel
-        if: steps.type.outputs.run_carousel == 'true'
         env:
           GROQ_API_KEY:           ${{ secrets.GROQ_API_KEY }}
+          TOGETHER_API_KEY:       ${{ secrets.TOGETHER_API_KEY }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_USER_ID:      ${{ secrets.INSTAGRAM_USER_ID }}
           CLOUDINARY_CLOUD_NAME:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           CLOUDINARY_API_KEY:     ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET:  ${{ secrets.CLOUDINARY_API_SECRET }}
           GH_TOKEN:               ${{ secrets.GH_TOKEN }}
-          TOGETHER_API_KEY:       ${{ secrets.TOGETHER_API_KEY }}
         run: python post.py
 
+  # ── REELS : lundi, mercredi, vendredi ───────────────────────────────────────
+  reels:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 12 * * 1,3,5'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-open-sans fonts-noto-color-emoji ffmpeg
+
+      - name: Python dependencies
+        run: |
+          pip install requests Pillow cloudinary "moviepy==1.0.3" numpy google-genai
+
       - name: Publier le Reel
-        if: steps.type.outputs.run_reel == 'true'
         env:
           GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
