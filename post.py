@@ -13,7 +13,7 @@ from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 GROQ_API_KEY     = os.environ["GROQ_API_KEY"]
-TOGETHER_API_KEY = os.environ["TOGETHER_API_KEY"]
+TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
 IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
@@ -450,6 +450,9 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
 
 def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
     """Génère l'illustration cover via Together.ai FLUX.1-schnell."""
+    if not TOGETHER_API_KEY:
+        raise ValueError("TOGETHER_API_KEY manquante")
+
     prompt = (
         f"Minimal modern editorial illustration, theme: {sujet}. "
         "Single abstract human figure, neutral posture, subtle sense of struggle "
@@ -461,6 +464,7 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
         "centered subject, no text, no symbols, no exaggerated emotion. "
         "Instagram carousel cover, prevention and awareness campaign."
     )
+    print(f"Together.ai : appel API (modèle FLUX.1-schnell)…")
     resp = requests.post(
         "https://api.together.xyz/v1/images/generations",
         headers={
@@ -478,9 +482,14 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
         },
         timeout=90,
     )
-    resp.raise_for_status()
-    b64 = resp.json()["data"][0]["b64_json"]
+    print(f"Together.ai : status {resp.status_code}")
+    if resp.status_code != 200:
+        print(f"Together.ai erreur : {resp.text[:300]}")
+        resp.raise_for_status()
+    data = resp.json()
+    b64 = data["data"][0]["b64_json"]
     img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
+    print(f"Together.ai : image reçue {img.size}")
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
 
