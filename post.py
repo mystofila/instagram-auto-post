@@ -218,7 +218,6 @@ def parse_groq_response(raw: str) -> dict:
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
         raise ValueError("'slides' doit avoir au moins 2 éléments")
 
-    # Vérification titre : max 5 mots, alerte si mot anglais
     MOTS_ANGLAIS = {"mental","health","recovery","self","care","love","mind","brain",
                     "body","soul","help","support","heal","feel","life","free","hope",
                     "strong","safe","okay","well","good","bad","you","your","we","our"}
@@ -448,8 +447,8 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
 # SECTION 6 — CRÉATION DES SLIDES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
-    """Génère l'illustration cover via Together.ai FLUX.1-schnell."""
+def fetch_cover_image(sujet: str) -> Image.Image:
+    """Génère l'image cover via Together.ai FLUX.1-schnell → retourne PIL Image."""
     if not TOGETHER_API_KEY:
         raise ValueError("TOGETHER_API_KEY manquante")
 
@@ -464,7 +463,7 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
         "centered subject, no text, no symbols, no exaggerated emotion. "
         "Instagram carousel cover, prevention and awareness campaign."
     )
-    print(f"Together.ai : appel API (modèle FLUX.1-schnell)…")
+    print("Together.ai : appel FLUX.1-schnell…")
     resp = requests.post(
         "https://api.together.xyz/v1/images/generations",
         headers={
@@ -472,114 +471,111 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
             "Content-Type":  "application/json",
         },
         json={
-            "model":  "black-forest-labs/FLUX.1-schnell",
-            "prompt": prompt,
-            "width":  1024,
-            "height": 1024,
-            "steps":  4,
-            "n":      1,
+            "model":           "black-forest-labs/FLUX.1-schnell",
+            "prompt":          prompt,
+            "width":           1024,
+            "height":          1024,
+            "steps":           4,
+            "n":               1,
             "response_format": "b64_json",
         },
         timeout=90,
     )
     print(f"Together.ai : status {resp.status_code}")
     if resp.status_code != 200:
-        print(f"Together.ai erreur : {resp.text[:300]}")
-        resp.raise_for_status()
-    data = resp.json()
-    b64 = data["data"][0]["b64_json"]
+        raise RuntimeError(f"Together.ai {resp.status_code} — {resp.text[:300]}")
+
+    payload = resp.json()
+    b64 = payload["data"][0]["b64_json"]
     img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-    print(f"Together.ai : image reçue {img.size}")
+    print(f"Together.ai : image reçue {img.size} ✓")
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
 
-def make_cover(titre: str, sujet: str, total: int) -> str:
+def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
     """
-    Slide cover :
-      ILLUS  : image Together.ai plein fond (1080x1080)
-      OVERLAY: rectangle semi-transparent en bas pour lisibilité
-      TITRE  : texte blanc bold en bas sur l'overlay
-      NAV    : séparateur + bouton + dots
+    Slide 1 — cover.
+    Priorité : image Together.ai plein fond + overlay gradient + titre blanc.
+    Fallback  : fond gris + illustration SVG (zones strictes) + titre sombre.
     """
-    # Image générée par IA
-    try:
-        bg_img = fetch_cover_image(titre, sujet)
-        print("Image Together.ai ✓")
-    except Exception as e:
-        print(f"Together.ai indisponible ({e}) → fond dégradé")
-        bg_img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
-
-    img = bg_img.copy()
-    d   = ImageDraw.Draw(img)
-
-    # Overlay gradient sombre en bas pour le titre
-    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
-    od = ImageDraw.Draw(overlay)
-    for i in range(520):
-        alpha = int((i/520)**1.5 * 195)
-        od.line([(0, SIZE-520+i),(SIZE, SIZE-520+i)], fill=(0,0,0,alpha))
-    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-    d   = ImageDraw.Draw(img)
-
-    # Titre blanc — police adaptative
-    margin = 55
-    max_w  = SIZE - margin * 2
-    f, lines = None, []
-    for font_size in [100, 86, 72, 60, 50]:
-        f     = F("OpenSans-ExtraBold.ttf", font_size)
-        lines = _wrap(d, titre.upper(), f, max_w)
-        if len(lines) <= 3:
-            break
-
-    # Positionner le titre dans la zone overlay (bas de slide)
-    bloc_h = len(lines) * int(f.size * 1.1)
-    y = SIZE - 160 - bloc_h
-    for line in lines:
-        # Ombre légère
-        d.text((margin+3, y+3), line, font=f, fill=(0,0,0,160))
-        d.text((margin,   y),   line, font=f, fill=(255,255,255,255))
-        y += int(f.size * 1.1)
-
-    _sep(d)
-    _arrow_btn(d, SIZE-100, SIZE-100)
-    _nav_dots(d, total, 0)
-    path = "/tmp/afder_slide_1.png"
-    img.save(path, format="PNG")
-    return path
     ILLUS_SIZE = 380
-    TITRE_Y1, TITRE_Y2 = 55, 400
-    ILLUS_Y1, ILLUS_Y2 = 415, 950
+    ILLUS_ZONE_Y1, ILLUS_ZONE_Y2 = 415, 950   # zone illustration (fallback)
+    TITRE_ZONE_Y1, TITRE_ZONE_Y2 = 55,  400   # zone titre (fallback)
 
-    img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
-    img = _blob(img, SIZE-30, SIZE//2+60, 340,420, (188,200,215), alpha=65)
-    img = _blob(img, -20,     SIZE-50,   160,160, (190,205,215), alpha=40)
+    # ── Tentative Together.ai ──────────────────────────────────────────────────
+    ai_ok = False
+    if TOGETHER_API_KEY:
+        try:
+            bg = fetch_cover_image(sujet)
+            ai_ok = True
+        except Exception as e:
+            print(f"Together.ai indisponible ({e}) → fallback SVG")
 
-    illus = _svg_to_pil(svg, ILLUS_SIZE)
-    ix = (SIZE - ILLUS_SIZE) // 2
-    iy = ILLUS_Y1 + (ILLUS_Y2 - ILLUS_Y1 - ILLUS_SIZE) // 2
-    img.paste(illus, (ix, iy), illus)
+    if ai_ok:
+        # --- Mode IA : image plein fond + overlay gradient sombre + titre blanc ---
+        img = bg.copy()
 
+        # Overlay gradient sur le bas (520px) pour lisibilité du titre
+        overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        for i in range(520):
+            alpha = int((i / 520) ** 1.5 * 195)
+            od.line([(0, SIZE - 520 + i), (SIZE, SIZE - 520 + i)], fill=(0, 0, 0, alpha))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+        d = ImageDraw.Draw(img)
+
+        # Titre blanc adaptatif — positionné dans la zone overlay (bas)
+        margin = 55
+        max_w  = SIZE - margin * 2
+        f = lines = None
+        for font_size in [100, 86, 72, 60, 50]:
+            f     = F("OpenSans-ExtraBold.ttf", font_size)
+            lines = _wrap(d, titre.upper(), f, max_w)
+            if len(lines) <= 3:
+                break
+        bloc_h = len(lines) * int(f.size * 1.1)
+        y = SIZE - 160 - bloc_h
+        for line in lines:
+            d.text((margin + 3, y + 3), line, font=f, fill=(0, 0, 0, 160))   # ombre
+            d.text((margin,     y    ), line, font=f, fill=(255, 255, 255))   # texte
+            y += int(f.size * 1.1)
+
+    else:
+        # --- Mode fallback : fond gris + illustration SVG + titre sombre ---
+        img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
+        img = _blob(img, SIZE - 30, SIZE // 2 + 60, 340, 420, (188, 200, 215), alpha=65)
+        img = _blob(img, -20,       SIZE - 50,      160, 160, (190, 205, 215), alpha=40)
+
+        # Illustration SVG — zone stricte
+        illus = _svg_to_pil(svg, ILLUS_SIZE)
+        ix = (SIZE - ILLUS_SIZE) // 2
+        iy = ILLUS_ZONE_Y1 + (ILLUS_ZONE_Y2 - ILLUS_ZONE_Y1 - ILLUS_SIZE) // 2
+        img.paste(illus, (ix, iy), illus)
+
+        d = ImageDraw.Draw(img)
+        margin = 55
+        max_w  = SIZE - margin * 2
+        f = lines = None
+        for font_size in [108, 92, 78, 66, 54]:
+            f     = F("OpenSans-ExtraBold.ttf", font_size)
+            lines = _wrap(d, titre.upper(), f, max_w)
+            if len(lines) * int(font_size * 1.08) <= (TITRE_ZONE_Y2 - TITRE_ZONE_Y1 - 20):
+                break
+        bloc_h = len(lines) * int(f.size * 1.08)
+        y = TITRE_ZONE_Y1 + (TITRE_ZONE_Y2 - TITRE_ZONE_Y1 - bloc_h) // 2
+        for line in lines:
+            d.text((margin, y), line, font=f, fill=DARK)
+            y += int(f.size * 1.08)
+
+    # Nav commune aux deux modes
     d = ImageDraw.Draw(img)
-    margin = 55
-    max_w  = SIZE - margin * 2
-    f, lines = None, []
-    for font_size in [108, 92, 78, 66, 54]:
-        f     = F("OpenSans-ExtraBold.ttf", font_size)
-        lines = _wrap(d, titre.upper(), f, max_w)
-        if len(lines) * int(font_size * 1.08) <= (TITRE_Y2 - TITRE_Y1 - 20):
-            break
-
-    bloc_h = len(lines) * int(f.size * 1.08)
-    y = TITRE_Y1 + (TITRE_Y2 - TITRE_Y1 - bloc_h) // 2
-    for line in lines:
-        d.text((margin, y), line, font=f, fill=DARK)
-        y += int(f.size * 1.08)
-
     _sep(d)
-    _arrow_btn(d, SIZE-100, SIZE-100)
+    _arrow_btn(d, SIZE - 100, SIZE - 100)
     _nav_dots(d, total, 0)
+
     path = "/tmp/afder_slide_1.png"
     img.save(path, format="PNG")
+    print(f"Slide 1 sauvegardée → {path}")
     return path
 
 
@@ -720,12 +716,14 @@ raw  = generate_with_retry(client, sujet)
 data = parse_groq_response(raw)
 print(f"Titre : {data['accroche']}")
 
+svg = get_valid_svg(data, sujet)
+
 hist.append({"date": today, "sujet": sujet})
 save_historique(hist, hist_sha)
 
 total  = 4
 slides = [
-    make_cover(data["accroche"], sujet, total),
+    make_cover(data["accroche"], sujet, svg, total),          # ← svg passé en arg
     make_content(data["slides"][0]["contenu"], 2, total),
     make_content(data["slides"][1]["contenu"], 3, total),
     make_cta(data["cta"], data["cta_sous"], total),
