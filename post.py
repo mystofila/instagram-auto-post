@@ -1,6 +1,7 @@
 """
 AFDER.RECOVERY — Carrousel Instagram automatique
-Groq  : génère texte + SVG illustration cartoon (un seul appel)
+Groq  : génère texte
+HuggingFace : génère illustration flat design cover
 Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déborde
 Slides: 1080x1080px PNG — Open Sans ExtraBold
 """
@@ -12,14 +13,15 @@ import cloudinary, cloudinary.uploader
 from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-GROQ_API_KEY     = os.environ["GROQ_API_KEY"]
-TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
-IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
-GH_TOKEN        = os.environ["GH_TOKEN"]
-REPO            = "mystofila/instagram-auto-post"
+GROQ_API_KEY  = os.environ["GROQ_API_KEY"]
+HF_API_KEY    = os.environ["HF_API_KEY"]
+IG_TOKEN      = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+IG_USER_ID    = os.environ["INSTAGRAM_USER_ID"]
+GH_TOKEN      = os.environ["GH_TOKEN"]
+REPO          = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "llama-3.3-70b-versatile"
+GROQ_MODEL    = "llama-3.3-70b-versatile"
+HF_MODEL      = "stabilityai/stable-diffusion-xl-base-1.0"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -122,7 +124,7 @@ def refresh_instagram_token(token):
     return new_token
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — GROQ : TEXTE UNIQUEMENT (SVG supprimé du prompt)
+# SECTION 3 — GROQ : TEXTE UNIQUEMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = """Tu es rédacteur expert en santé mentale, addiction et pair-aidance pour Instagram.
@@ -146,7 +148,6 @@ Tutoiement bienveillant. Max 190 caractères par slide.
 CAPTION : accrocheur, avec question ouverte pour engager la communauté. 3-5 hashtags pertinents."""
 
 def generate_with_retry(client, sujet, titres_deja_utilises, max_retries=3):
-    # Construire la contrainte anti-doublon
     contrainte_titres = ""
     if titres_deja_utilises:
         liste = ", ".join(f'"{t}"' for t in titres_deja_utilises[-10:])
@@ -165,7 +166,7 @@ Réponds avec ce JSON sur UNE SEULE LIGNE :
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user",   "content": prompt},
                 ],
-                temperature=0.85,  # plus haut = plus de variété
+                temperature=0.85,
                 max_tokens=1200,
             )
             return resp.choices[0].message.content.strip()
@@ -209,7 +210,6 @@ def parse_groq_response(raw: str) -> dict:
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
         raise ValueError("'slides' doit avoir au moins 2 éléments")
 
-    # Vérification titre
     MOTS_ANGLAIS = {"mental","health","recovery","self","care","love","mind","brain",
                     "body","soul","help","support","heal","feel","life","free","hope",
                     "strong","safe","okay","well","good","bad","you","your","we","our"}
@@ -233,11 +233,8 @@ def parse_groq_response(raw: str) -> dict:
     return data
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — SVG FALLBACKS (illustrations propres garanties)
+# SECTION 4 — SVG FALLBACKS
 # ═══════════════════════════════════════════════════════════════════════════════
-
-# On supprime complètement le SVG généré par Groq (trop instable).
-# On utilise uniquement les fallbacks dessinés à la main, choisis par sujet.
 
 def get_svg_for_sujet(sujet: str) -> str:
     s = sujet.lower()
@@ -255,7 +252,6 @@ def get_svg_for_sujet(sujet: str) -> str:
 
 SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-  <!-- Personne gauche -->
   <circle cx="155" cy="190" r="52" fill="#FBBF8A"/>
   <ellipse cx="155" cy="155" rx="40" ry="24" fill="#E8622A"/>
   <circle cx="130" cy="163" r="17" fill="#E8622A"/>
@@ -268,9 +264,7 @@ SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <path d="M139 208 Q155 220 171 208" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
   <ellipse cx="130" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
   <ellipse cx="180" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <!-- Bras gauche tendu vers centre -->
   <rect x="195" y="265" width="55" height="22" rx="11" fill="#FBBF8A"/>
-  <!-- Personne droite -->
   <circle cx="345" cy="190" r="52" fill="#C68642"/>
   <ellipse cx="345" cy="158" rx="38" ry="22" fill="#6B7280"/>
   <circle cx="320" cy="165" r="16" fill="#6B7280"/>
@@ -283,11 +277,8 @@ SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <path d="M329 208 Q345 220 361 208" stroke="#4A2008" stroke-width="4" fill="none" stroke-linecap="round"/>
   <ellipse cx="320" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.5"/>
   <ellipse cx="370" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.5"/>
-  <!-- Bras droit tendu vers centre -->
   <rect x="250" y="265" width="55" height="22" rx="11" fill="#C68642"/>
-  <!-- Coeur au centre -->
   <path d="M250 255 C250 255 234 238 223 247 C212 256 223 272 250 288 C277 272 288 256 277 247 C266 238 250 255 250 255Z" fill="#E85D5D"/>
-  <!-- Étoiles -->
   <g transform="translate(418,90)"><path d="M0,-20 L5,-5 L20,0 L5,5 L0,20 L-5,5 L-20,0 L-5,-5 Z" fill="#FCD34D"/></g>
   <g transform="translate(80,390)"><path d="M0,-13 L3,-3 L13,0 L3,3 L0,13 L-3,3 L-13,0 L-3,-3 Z" fill="#FCD34D"/></g>
   <g transform="translate(420,360)"><path d="M0,-10 L2.5,-2.5 L10,0 L2.5,2.5 L0,10 L-2.5,2.5 L-10,0 L-2.5,-2.5 Z" fill="#FCD34D"/></g>
@@ -295,37 +286,29 @@ SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
 
 SVG_BRAIN = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="265" r="205" fill="#DDE3ED"/>
-  <!-- Cerveau stylisé -->
   <ellipse cx="250" cy="210" rx="130" ry="105" fill="#FFB3C6"/>
   <ellipse cx="185" cy="195" rx="70" ry="85" fill="#FF8FAB"/>
   <ellipse cx="315" cy="195" rx="70" ry="85" fill="#FF8FAB"/>
-  <!-- Sillon central -->
   <line x1="250" y1="115" x2="250" y2="305" stroke="#E8607A" stroke-width="5" stroke-linecap="round"/>
-  <!-- Circonvolutions gauche -->
   <path d="M130 175 Q155 158 178 175 Q155 192 130 175Z" fill="#E8607A" opacity="0.5"/>
   <path d="M118 220 Q148 200 172 220 Q148 240 118 220Z" fill="#E8607A" opacity="0.5"/>
   <path d="M128 265 Q158 245 180 265 Q158 285 128 265Z" fill="#E8607A" opacity="0.5"/>
-  <!-- Circonvolutions droite -->
   <path d="M370 175 Q345 158 322 175 Q345 192 370 175Z" fill="#E8607A" opacity="0.5"/>
   <path d="M382 220 Q352 200 328 220 Q352 240 382 220Z" fill="#E8607A" opacity="0.5"/>
   <path d="M372 265 Q342 245 320 265 Q342 285 372 265Z" fill="#E8607A" opacity="0.5"/>
-  <!-- Visage souriant en bas -->
   <circle cx="250" cy="355" r="55" fill="#FBBF8A"/>
   <circle cx="232" cy="347" r="7" fill="#7C3A1E"/>
   <circle cx="268" cy="347" r="7" fill="#7C3A1E"/>
   <path d="M230 368 Q250 385 270 368" stroke="#7C3A1E" stroke-width="5" fill="none" stroke-linecap="round"/>
   <ellipse cx="220" cy="362" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
   <ellipse cx="280" cy="362" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <!-- Éclair (neurosciences) -->
   <polygon points="275,130 258,168 270,168 248,210 272,210 245,255 295,200 272,200 290,165 275,165 292,130" fill="#FCD34D"/>
-  <!-- Étoiles -->
   <g transform="translate(95,105)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
   <g transform="translate(408,108)"><path d="M0,-14 L3.5,-3.5 L14,0 L3.5,3.5 L0,14 L-3.5,3.5 L-14,0 L-3.5,-3.5 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="210" fill="#DDE3ED"/>
-  <!-- Parent gauche (grand) -->
   <circle cx="135" cy="168" r="50" fill="#FBBF8A"/>
   <ellipse cx="135" cy="135" rx="38" ry="22" fill="#E8622A"/>
   <circle cx="112" cy="142" r="16" fill="#E8622A"/>
@@ -338,7 +321,6 @@ SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <path d="M120 186 Q135 197 150 186" stroke="#7C3A1E" stroke-width="3.5" fill="none" stroke-linecap="round"/>
   <ellipse cx="112" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.6"/>
   <ellipse cx="158" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.6"/>
-  <!-- Parent droit (grand) -->
   <circle cx="365" cy="168" r="50" fill="#C68642"/>
   <ellipse cx="365" cy="137" rx="36" ry="21" fill="#6B7280"/>
   <circle cx="342" cy="144" r="15" fill="#6B7280"/>
@@ -351,7 +333,6 @@ SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <path d="M350 186 Q365 197 380 186" stroke="#4A2008" stroke-width="3.5" fill="none" stroke-linecap="round"/>
   <ellipse cx="342" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.5"/>
   <ellipse cx="388" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.5"/>
-  <!-- Enfant centre (petit) -->
   <circle cx="250" cy="248" r="38" fill="#FBBF8A"/>
   <ellipse cx="250" cy="222" rx="28" ry="16" fill="#92400E"/>
   <rect x="220" y="283" width="60" height="80" rx="22" fill="#4ADE80"/>
@@ -362,55 +343,43 @@ SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <path d="M236 264 Q250 274 264 264" stroke="#7C3A1E" stroke-width="3" fill="none" stroke-linecap="round"/>
   <ellipse cx="230" cy="259" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
   <ellipse cx="270" cy="259" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
-  <!-- Bras parents vers enfant -->
   <rect x="172" y="272" width="52" height="18" rx="9" fill="#FBBF8A"/>
   <rect x="276" y="272" width="52" height="18" rx="9" fill="#C68642"/>
-  <!-- Étoile -->
   <g transform="translate(250,100)"><path d="M0,-22 L5.5,-5.5 L22,0 L5.5,5.5 L0,22 L-5.5,5.5 L-22,0 L-5.5,-5.5 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_TREE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="210" fill="#DDE3ED"/>
-  <!-- Tronc -->
   <rect x="228" y="320" width="44" height="130" rx="18" fill="#A0784A"/>
-  <!-- Racines -->
   <path d="M228 430 Q195 448 168 458" stroke="#8B6914" stroke-width="8" stroke-linecap="round" fill="none"/>
   <path d="M250 445 Q250 462 250 475" stroke="#8B6914" stroke-width="8" stroke-linecap="round" fill="none"/>
   <path d="M272 430 Q305 448 332 458" stroke="#8B6914" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <!-- Feuillage (3 couches) -->
   <ellipse cx="250" cy="325" rx="118" ry="88" fill="#7BC47F"/>
   <ellipse cx="250" cy="268" rx="100" ry="80" fill="#5BAF60"/>
   <ellipse cx="250" cy="215" rx="80" ry="66" fill="#3D9443"/>
   <ellipse cx="250" cy="168" rx="58" ry="50" fill="#2D7A35"/>
-  <!-- Fruits / fleurs -->
   <circle cx="192" cy="278" r="12" fill="#E85D5D"/>
   <circle cx="308" cy="278" r="12" fill="#E85D5D"/>
   <circle cx="250" cy="242" r="11" fill="#F7C948"/>
   <circle cx="210" cy="225" r="10" fill="#E85D5D"/>
   <circle cx="290" cy="225" r="10" fill="#F7C948"/>
   <circle cx="250" cy="195" r="9" fill="#E85D5D"/>
-  <!-- Petit oiseau -->
   <ellipse cx="340" cy="190" rx="18" ry="12" fill="#60A5FA"/>
   <circle cx="354" cy="185" r="9" fill="#60A5FA"/>
   <circle cx="359" cy="183" r="3" fill="#1E3A5F"/>
   <polygon points="364,185 372,183 364,187" fill="#F7C948"/>
   <path d="M322 190 Q330 175 340 182" stroke="#60A5FA" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <!-- Étoile -->
   <g transform="translate(105,130)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
   <g transform="translate(408,340)"><path d="M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_MIRROR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="265" r="210" fill="#DDE3ED"/>
-  <!-- Miroir (cadre) -->
   <rect x="148" y="65" width="204" height="295" rx="102" fill="#C4A167"/>
   <rect x="160" y="77" width="180" height="271" rx="92" fill="#EEF6FB"/>
-  <!-- Reflet lumineux -->
   <path d="M185 108 C185 108 170 135 174 158" stroke="white" stroke-width="8" stroke-linecap="round" opacity="0.75"/>
-  <!-- Pied du miroir -->
   <rect x="222" y="360" width="56" height="85" rx="28" fill="#C4A167"/>
   <ellipse cx="250" cy="445" rx="45" ry="12" fill="#B8904A"/>
-  <!-- Personnage dans le miroir -->
   <circle cx="250" cy="178" r="44" fill="#FBBF8A"/>
   <ellipse cx="250" cy="147" rx="36" ry="21" fill="#E8622A"/>
   <circle cx="227" cy="155" r="14" fill="#E8622A"/>
@@ -423,7 +392,6 @@ SVG_MIRROR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <path d="M235 197 Q250 209 265 197" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
   <ellipse cx="226" cy="192" rx="11" ry="7" fill="#F9A8A8" opacity="0.65"/>
   <ellipse cx="274" cy="192" rx="11" ry="7" fill="#F9A8A8" opacity="0.65"/>
-  <!-- Étoiles -->
   <g transform="translate(108,112)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
   <g transform="translate(392,112)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
   <g transform="translate(410,350)"><path d="M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z" fill="#FCD34D"/></g>
@@ -431,38 +399,30 @@ SVG_MIRROR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
 
 SVG_CODEP = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-  <!-- Deux cercles entrelacés (codépendance) -->
   <circle cx="205" cy="250" r="95" fill="#93C5FD" opacity="0.7"/>
   <circle cx="295" cy="250" r="95" fill="#F9A8D4" opacity="0.7"/>
-  <!-- Zone d'intersection -->
   <path d="M250 162 Q298 175 298 250 Q298 325 250 338 Q202 325 202 250 Q202 175 250 162Z" fill="#C4B5FD" opacity="0.85"/>
-  <!-- Personne gauche -->
   <circle cx="172" cy="215" r="38" fill="#FBBF8A"/>
   <ellipse cx="172" cy="190" rx="30" ry="17" fill="#3B82F6"/>
   <circle cx="158" cy="197" r="11" fill="#3B82F6"/>
   <circle cx="186" cy="197" r="11" fill="#3B82F6"/>
   <circle cx="161" cy="217" r="5" fill="#7C3A1E"/>
   <circle cx="183" cy="217" r="5" fill="#7C3A1E"/>
-  <!-- Expression neutre/tendue gauche -->
   <path d="M159 232 Q172 230 185 232" stroke="#7C3A1E" stroke-width="3.5" fill="none" stroke-linecap="round"/>
   <ellipse cx="152" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
   <ellipse cx="192" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
-  <!-- Personne droite -->
   <circle cx="328" cy="215" r="38" fill="#C68642"/>
   <ellipse cx="328" cy="191" rx="28" ry="16" fill="#6B7280"/>
   <circle cx="314" cy="198" r="10" fill="#6B7280"/>
   <circle cx="342" cy="198" r="10" fill="#6B7280"/>
   <circle cx="317" cy="217" r="5" fill="#4A2008"/>
   <circle cx="339" cy="217" r="5" fill="#4A2008"/>
-  <!-- Expression tendue droite -->
   <path d="M315 232 Q328 228 341 232" stroke="#4A2008" stroke-width="3.5" fill="none" stroke-linecap="round"/>
   <ellipse cx="308" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.5"/>
   <ellipse cx="348" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.5"/>
-  <!-- Chaîne symbolique au centre -->
   <circle cx="250" cy="290" r="14" fill="none" stroke="#8B5CF6" stroke-width="5"/>
   <circle cx="250" cy="320" r="14" fill="none" stroke="#8B5CF6" stroke-width="5"/>
   <rect x="244" y="300" width="12" height="24" fill="#DDE3ED"/>
-  <!-- Étoiles -->
   <g transform="translate(415,92)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
   <g transform="translate(82,400)"><path d="M0,-13 L3,-3 L13,0 L3,3 L0,13 L-3,3 L-13,0 L-3,-3 Z" fill="#FCD34D"/></g>
 </svg>"""
@@ -526,71 +486,108 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
     return img
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — CRÉATION DES SLIDES
+# SECTION 6 — HUGGINGFACE : IMAGE COVER
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Prompts par thème — style flat design illustration cohérent
+HF_PROMPTS = {
+    "famille":      "flat design illustration, family support and connection, warm pastel colors, simple geometric shapes, caring figures, soft background, mental health awareness poster style, no text",
+    "rechute":      "flat design illustration, person walking forward on a winding path, resilience and hope, muted tones, simple geometric shapes, gentle journey metaphor, mental health awareness style, no text",
+    "honte":        "flat design illustration, person emerging from shadow into light, self-compassion theme, soft warm colors, simple geometric shapes, gentle and hopeful mood, mental health awareness poster, no text",
+    "pair":         "flat design illustration, two figures side by side in solidarity, peer support theme, warm pastel colors, simple geometric shapes, community and empathy, mental health awareness style, no text",
+    "frontière":    "flat design illustration, person standing calmly with clear personal space, boundaries and self-respect, soft colors, simple geometric shapes, empowerment theme, mental health awareness poster, no text",
+    "codépendance": "flat design illustration, two overlapping circles with figures finding balance, codependency awareness, soft pastel colors, simple geometric shapes, equilibrium theme, mental health style, no text",
+    "deuil":        "flat design illustration, person holding a glowing light, grief and healing journey, soft muted colors, simple geometric shapes, gentle hopeful mood, mental health awareness poster, no text",
+    "soin":         "flat design illustration, person nurturing a small plant or light, self-care theme, warm soft colors, simple geometric shapes, growth and healing mood, mental health awareness style, no text",
+    "default":      "flat design illustration, single figure in calm contemplative pose, mental health and wellbeing, soft pastel colors, simple geometric shapes, peaceful mood, awareness campaign poster style, no text",
+}
+
+def _get_hf_prompt(sujet: str) -> str:
+    s = sujet.lower()
+    if any(w in s for w in ["famille","parent","enfant","proche","silence"]): return HF_PROMPTS["famille"]
+    if any(w in s for w in ["rechute","linéaire","chemin","neuroscience"]):   return HF_PROMPTS["rechute"]
+    if any(w in s for w in ["honte","deuil","identité"]):                     return HF_PROMPTS["honte"]
+    if any(w in s for w in ["pair","aidance","vécu"]):                        return HF_PROMPTS["pair"]
+    if any(w in s for w in ["frontière","saine","poser"]):                    return HF_PROMPTS["frontière"]
+    if any(w in s for w in ["codépendance","co-dépendance","épuisant","perdre"]): return HF_PROMPTS["codépendance"]
+    if any(w in s for w in ["deuil"]):                                        return HF_PROMPTS["deuil"]
+    if any(w in s for w in ["soin","signes","prends"]):                       return HF_PROMPTS["soin"]
+    return HF_PROMPTS["default"]
+
 def fetch_cover_image(sujet: str) -> Image.Image:
-    """Génère l'image cover via Together.ai FLUX.1-schnell → retourne PIL Image."""
-    if not TOGETHER_API_KEY:
-        raise ValueError("TOGETHER_API_KEY manquante")
+    """Génère l'image cover via HuggingFace SDXL → retourne PIL Image."""
+    prompt = _get_hf_prompt(sujet)
+    negative = "photorealistic, photo, 3d render, text, watermark, logo, ugly, blurry, dark, violent, sad"
 
-    prompt = (
-        f"Minimal modern editorial illustration, theme: {sujet}. "
-        "Single abstract human figure, neutral posture, subtle sense of struggle "
-        "without dramatization, no facial expression, no smile, no cartoon style. "
-        "Soft muted tones, calm neutral background, clean composition with strong "
-        "negative space for typography overlay. Professional public health style, "
-        "restrained emotional tone, focus on resilience and continuity. "
-        "Soft lighting, simple shapes, hybrid flat-to-soft 3D aesthetic, "
-        "centered subject, no text, no symbols, no exaggerated emotion. "
-        "Instagram carousel cover, prevention and awareness campaign."
-    )
-    print("Together.ai : appel FLUX.1-schnell…")
+    print(f"HuggingFace : appel {HF_MODEL}…")
     resp = requests.post(
-        "https://api.together.xyz/v1/images/generations",
-        headers={
-            "Authorization": f"Bearer {TOGETHER_API_KEY}",
-            "Content-Type":  "application/json",
-        },
+        f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+        headers={"Authorization": f"Bearer {HF_API_KEY}"},
         json={
-            "model":           "black-forest-labs/FLUX.1-schnell",
-            "prompt":          prompt,
-            "width":           1024,
-            "height":          1024,
-            "steps":           4,
-            "n":               1,
-            "response_format": "b64_json",
+            "inputs": prompt,
+            "parameters": {
+                "negative_prompt": negative,
+                "width":  1024,
+                "height": 1024,
+                "num_inference_steps": 30,
+                "guidance_scale": 7.5,
+            },
+            "options": {"wait_for_model": True},
         },
-        timeout=90,
+        timeout=120,
     )
-    print(f"Together.ai : status {resp.status_code}")
-    if resp.status_code != 200:
-        raise RuntimeError(f"Together.ai {resp.status_code} — {resp.text[:300]}")
+    print(f"HuggingFace : status {resp.status_code}")
 
-    payload = resp.json()
-    b64 = payload["data"][0]["b64_json"]
-    img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-    print(f"Together.ai : image reçue {img.size} ✓")
+    if resp.status_code == 503:
+        # Modèle en cours de chargement — attente et retry
+        print("Modèle en chargement, attente 30s…")
+        time.sleep(30)
+        resp = requests.post(
+            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
+            headers={"Authorization": f"Bearer {HF_API_KEY}"},
+            json={
+                "inputs": prompt,
+                "parameters": {
+                    "negative_prompt": negative,
+                    "width":  1024,
+                    "height": 1024,
+                    "num_inference_steps": 30,
+                    "guidance_scale": 7.5,
+                },
+                "options": {"wait_for_model": True},
+            },
+            timeout=120,
+        )
+        print(f"HuggingFace retry : status {resp.status_code}")
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"HuggingFace {resp.status_code} — {resp.text[:300]}")
+
+    img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    print(f"HuggingFace : image reçue {img.size} ✓")
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECTION 7 — CRÉATION DES SLIDES
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
     """
     Slide 1 — cover.
-    Priorité : image Together.ai plein fond + overlay gradient + titre blanc.
-    Fallback  : fond gris + illustration SVG (zones strictes) + titre sombre.
+    Priorité : image HuggingFace plein fond + overlay gradient + titre blanc.
+    Fallback  : fond gris + illustration SVG + titre sombre.
     """
     ILLUS_SIZE = 380
     ILLUS_ZONE_Y1, ILLUS_ZONE_Y2 = 415, 950
     TITRE_ZONE_Y1, TITRE_ZONE_Y2 = 55,  400
 
     ai_ok = False
-    if TOGETHER_API_KEY:
-        try:
-            bg = fetch_cover_image(sujet)
-            ai_ok = True
-        except Exception as e:
-            print(f"Together.ai indisponible ({e}) → fallback SVG")
+    try:
+        bg = fetch_cover_image(sujet)
+        ai_ok = True
+    except Exception as e:
+        print(f"HuggingFace indisponible ({e}) → fallback SVG")
 
     if ai_ok:
         img = bg.copy()
@@ -742,7 +739,7 @@ def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
     return path
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — PUBLICATION INSTAGRAM
+# SECTION 8 — PUBLICATION INSTAGRAM
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def ig_child(url):
@@ -772,7 +769,7 @@ def ig_publish(cid):
     return r.json()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 8 — MAIN
+# SECTION 9 — MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
 IG_TOKEN = refresh_instagram_token(IG_TOKEN)
@@ -788,7 +785,6 @@ print(f"Sujet : {sujet}")
 client = Groq(api_key=GROQ_API_KEY)
 print("Génération Groq…")
 
-# Régénération si titre générique détecté (max 3 essais)
 data = None
 for tentative in range(3):
     raw  = generate_with_retry(client, sujet, titres_deja_utilises)
@@ -800,11 +796,8 @@ for tentative in range(3):
 
 print(f"Titre retenu : {data['accroche']}")
 
-# SVG : sélection par sujet (plus de génération Groq)
 svg = get_svg_for_sujet(sujet)
-print(f"SVG sélectionné pour : {sujet}")
 
-# Sauvegarder titre dans historique pour anti-doublon
 hist.append({"date": today, "sujet": sujet, "titre": data["accroche"]})
 save_historique(hist, hist_sha)
 
