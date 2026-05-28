@@ -1,9 +1,9 @@
 """
 AFDER.RECOVERY — Carrousel Instagram automatique
-Groq  : génère texte
-HuggingFace : génère illustration flat design cover
-Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déborde
-Slides: 1080x1080px PNG — Open Sans ExtraBold
+Groq        : génère texte
+Pollinations.ai : génère illustration flat design cover (gratuit, sans clé)
+Layout      : zones strictes — illustration 380px max, titre adaptatif
+Slides      : 1080x1080px PNG — Open Sans ExtraBold
 """
 
 import os, re, json, math, time, random, base64, datetime, requests, io
@@ -13,15 +13,13 @@ import cloudinary, cloudinary.uploader
 from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-GROQ_API_KEY  = os.environ["GROQ_API_KEY"]
-HF_API_KEY    = os.environ["HF_API_KEY"]
-IG_TOKEN      = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-IG_USER_ID    = os.environ["INSTAGRAM_USER_ID"]
-GH_TOKEN      = os.environ["GH_TOKEN"]
-REPO          = "mystofila/instagram-auto-post"
+GROQ_API_KEY    = os.environ["GROQ_API_KEY"]
+IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
+GH_TOKEN        = os.environ["GH_TOKEN"]
+REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL    = "llama-3.3-70b-versatile"
-HF_MODEL      = "stabilityai/stable-diffusion-xl-base-1.0"
+GROQ_MODEL      = "llama-3.3-70b-versatile"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -486,87 +484,50 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
     return img
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — HUGGINGFACE : IMAGE COVER
+# SECTION 6 — POLLINATIONS.AI : IMAGE COVER (gratuit, sans clé)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Prompts par thème — style flat design illustration cohérent
-HF_PROMPTS = {
-    "famille":      "flat design illustration, family support and connection, warm pastel colors, simple geometric shapes, caring figures, soft background, mental health awareness poster style, no text",
-    "rechute":      "flat design illustration, person walking forward on a winding path, resilience and hope, muted tones, simple geometric shapes, gentle journey metaphor, mental health awareness style, no text",
-    "honte":        "flat design illustration, person emerging from shadow into light, self-compassion theme, soft warm colors, simple geometric shapes, gentle and hopeful mood, mental health awareness poster, no text",
-    "pair":         "flat design illustration, two figures side by side in solidarity, peer support theme, warm pastel colors, simple geometric shapes, community and empathy, mental health awareness style, no text",
-    "frontière":    "flat design illustration, person standing calmly with clear personal space, boundaries and self-respect, soft colors, simple geometric shapes, empowerment theme, mental health awareness poster, no text",
-    "codépendance": "flat design illustration, two overlapping circles with figures finding balance, codependency awareness, soft pastel colors, simple geometric shapes, equilibrium theme, mental health style, no text",
-    "deuil":        "flat design illustration, person holding a glowing light, grief and healing journey, soft muted colors, simple geometric shapes, gentle hopeful mood, mental health awareness poster, no text",
-    "soin":         "flat design illustration, person nurturing a small plant or light, self-care theme, warm soft colors, simple geometric shapes, growth and healing mood, mental health awareness style, no text",
-    "default":      "flat design illustration, single figure in calm contemplative pose, mental health and wellbeing, soft pastel colors, simple geometric shapes, peaceful mood, awareness campaign poster style, no text",
+POLLINATIONS_PROMPTS = {
+    "famille":      "flat design illustration, family support and connection, warm pastel colors, simple geometric shapes, caring figures, soft background, mental health awareness poster style, no text, no watermark",
+    "rechute":      "flat design illustration, person walking forward on a winding path, resilience and hope, muted tones, simple geometric shapes, gentle journey metaphor, mental health awareness style, no text, no watermark",
+    "honte":        "flat design illustration, person emerging from shadow into light, self-compassion theme, soft warm colors, simple geometric shapes, gentle and hopeful mood, mental health awareness poster, no text, no watermark",
+    "pair":         "flat design illustration, two figures side by side in solidarity, peer support theme, warm pastel colors, simple geometric shapes, community and empathy, mental health awareness style, no text, no watermark",
+    "frontiere":    "flat design illustration, person standing calmly with clear personal space, boundaries and self-respect, soft colors, simple geometric shapes, empowerment theme, mental health awareness poster, no text, no watermark",
+    "codep":        "flat design illustration, two overlapping circles with figures finding balance, codependency awareness, soft pastel colors, simple geometric shapes, equilibrium theme, mental health style, no text, no watermark",
+    "deuil":        "flat design illustration, person holding a glowing light, grief and healing journey, soft muted colors, simple geometric shapes, gentle hopeful mood, mental health awareness poster, no text, no watermark",
+    "soin":         "flat design illustration, person nurturing a small plant or light, self-care theme, warm soft colors, simple geometric shapes, growth and healing mood, mental health awareness style, no text, no watermark",
+    "default":      "flat design illustration, single figure in calm contemplative pose, mental health and wellbeing, soft pastel colors, simple geometric shapes, peaceful mood, awareness campaign poster style, no text, no watermark",
 }
 
-def _get_hf_prompt(sujet: str) -> str:
+def _get_prompt(sujet: str) -> str:
     s = sujet.lower()
-    if any(w in s for w in ["famille","parent","enfant","proche","silence"]): return HF_PROMPTS["famille"]
-    if any(w in s for w in ["rechute","linéaire","chemin","neuroscience"]):   return HF_PROMPTS["rechute"]
-    if any(w in s for w in ["honte","deuil","identité"]):                     return HF_PROMPTS["honte"]
-    if any(w in s for w in ["pair","aidance","vécu"]):                        return HF_PROMPTS["pair"]
-    if any(w in s for w in ["frontière","saine","poser"]):                    return HF_PROMPTS["frontière"]
-    if any(w in s for w in ["codépendance","co-dépendance","épuisant","perdre"]): return HF_PROMPTS["codépendance"]
-    if any(w in s for w in ["deuil"]):                                        return HF_PROMPTS["deuil"]
-    if any(w in s for w in ["soin","signes","prends"]):                       return HF_PROMPTS["soin"]
-    return HF_PROMPTS["default"]
+    if any(w in s for w in ["famille","parent","enfant","proche","silence"]): return POLLINATIONS_PROMPTS["famille"]
+    if any(w in s for w in ["rechute","linéaire","chemin","neuroscience"]):   return POLLINATIONS_PROMPTS["rechute"]
+    if any(w in s for w in ["honte","deuil","identité"]):                     return POLLINATIONS_PROMPTS["honte"]
+    if any(w in s for w in ["pair","aidance","vécu"]):                        return POLLINATIONS_PROMPTS["pair"]
+    if any(w in s for w in ["frontière","saine","poser"]):                    return POLLINATIONS_PROMPTS["frontiere"]
+    if any(w in s for w in ["codépendance","co-dépendance","épuisant","perdre"]): return POLLINATIONS_PROMPTS["codep"]
+    if any(w in s for w in ["soin","signes","prends"]):                       return POLLINATIONS_PROMPTS["soin"]
+    return POLLINATIONS_PROMPTS["default"]
 
 def fetch_cover_image(sujet: str) -> Image.Image:
-    """Génère l'image cover via HuggingFace SDXL → retourne PIL Image."""
-    prompt = _get_hf_prompt(sujet)
-    negative = "photorealistic, photo, 3d render, text, watermark, logo, ugly, blurry, dark, violent, sad"
-
-    print(f"HuggingFace : appel {HF_MODEL}…")
-    resp = requests.post(
-        f"https://api-inference.huggingface.co/models/{HF_MODEL}",
-        headers={"Authorization": f"Bearer {HF_API_KEY}"},
-        json={
-            "inputs": prompt,
-            "parameters": {
-                "negative_prompt": negative,
-                "width":  1024,
-                "height": 1024,
-                "num_inference_steps": 30,
-                "guidance_scale": 7.5,
-            },
-            "options": {"wait_for_model": True},
-        },
-        timeout=120,
+    """Génère l'image cover via Pollinations.ai — gratuit, sans clé."""
+    prompt = _get_prompt(sujet)
+    seed   = random.randint(1, 99999)
+    url    = (
+        f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}"
+        f"?width=1024&height=1024&nologo=true&seed={seed}&model=flux"
     )
-    print(f"HuggingFace : status {resp.status_code}")
-
-    if resp.status_code == 503:
-        # Modèle en cours de chargement — attente et retry
-        print("Modèle en chargement, attente 30s…")
-        time.sleep(30)
-        resp = requests.post(
-            f"https://api-inference.huggingface.co/models/{HF_MODEL}",
-            headers={"Authorization": f"Bearer {HF_API_KEY}"},
-            json={
-                "inputs": prompt,
-                "parameters": {
-                    "negative_prompt": negative,
-                    "width":  1024,
-                    "height": 1024,
-                    "num_inference_steps": 30,
-                    "guidance_scale": 7.5,
-                },
-                "options": {"wait_for_model": True},
-            },
-            timeout=120,
-        )
-        print(f"HuggingFace retry : status {resp.status_code}")
+    print(f"Pollinations.ai : appel (seed={seed})…")
+    resp = requests.get(url, timeout=90)
+    print(f"Pollinations.ai : status {resp.status_code}")
 
     if resp.status_code != 200:
-        raise RuntimeError(f"HuggingFace {resp.status_code} — {resp.text[:300]}")
+        raise RuntimeError(f"Pollinations {resp.status_code} — {resp.text[:200]}")
 
     img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    print(f"HuggingFace : image reçue {img.size} ✓")
+    print(f"Pollinations.ai : image reçue {img.size} ✓")
     return img.resize((SIZE, SIZE), Image.LANCZOS)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 7 — CRÉATION DES SLIDES
@@ -575,7 +536,7 @@ def fetch_cover_image(sujet: str) -> Image.Image:
 def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
     """
     Slide 1 — cover.
-    Priorité : image HuggingFace plein fond + overlay gradient + titre blanc.
+    Priorité : image Pollinations.ai plein fond + overlay gradient + titre blanc.
     Fallback  : fond gris + illustration SVG + titre sombre.
     """
     ILLUS_SIZE = 380
@@ -587,7 +548,7 @@ def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
         bg = fetch_cover_image(sujet)
         ai_ok = True
     except Exception as e:
-        print(f"HuggingFace indisponible ({e}) → fallback SVG")
+        print(f"Pollinations.ai indisponible ({e}) → fallback SVG")
 
     if ai_ok:
         img = bg.copy()
