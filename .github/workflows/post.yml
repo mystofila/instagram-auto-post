@@ -31,7 +31,7 @@ jobs:
           CLOUDINARY_API_SECRET:  ${{ secrets.CLOUDINARY_API_SECRET }}
           GH_TOKEN:               ${{ secrets.GH_TOKEN }}
         run: python post.py
- 
+
   # ── REELS : lundi, mercredi, vendredi ───────────────────────────────────────
   reels:
     runs-on: ubuntu-latest
@@ -48,10 +48,10 @@ jobs:
       - name: Python dependencies
         run: |
           pip install requests Pillow cloudinary "moviepy==1.0.3" numpy \
-                      google-generativeai beautifulsoup4 pynacl
+                      openai beautifulsoup4 pynacl
       - name: Publier le Reel
         env:
-          GEMINI_API_KEY:         ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY:       ${{ secrets.DEEPSEEK_API_KEY }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
           INSTAGRAM_USER_ID:      ${{ secrets.INSTAGRAM_USER_ID }}
           CLOUDINARY_CLOUD_NAME:  ${{ secrets.CLOUDINARY_CLOUD_NAME }}
