@@ -1,6 +1,6 @@
 """
 AFDER.RECOVERY — Reels Instagram automatique
-Scrape JFT (Just For Today - NA) → adapte en français via Gemini
+Scrape JFT (Just For Today - NA) → adapte en français via DeepSeek
 Crée une vidéo 9:16 1080x1920 avec animation machine à écrire
 Publie sur Instagram via Cloudinary + Graph API
 """
@@ -11,10 +11,10 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from moviepy.editor import VideoClip
 import cloudinary, cloudinary.uploader
-import google.generativeai as genai
+from openai import OpenAI
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
+DEEPSEEK_API_KEY = os.environ["DEEPSEEK_API_KEY"]
 IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
@@ -26,7 +26,6 @@ cloudinary.config(
     api_key    = os.environ["CLOUDINARY_API_KEY"],
     api_secret = os.environ["CLOUDINARY_API_SECRET"],
 )
-genai.configure(api_key=GEMINI_API_KEY)
 
 # ── Vidéo ──────────────────────────────────────────────────────────────────────
 WIDTH, HEIGHT  = 1080, 1920
@@ -87,11 +86,14 @@ def scrape_jft():
     print(f"JFT pensée : {jft}")
     return {"titre": titre, "jft": jft}
 
-# ── Génération citation Gemini ─────────────────────────────────────────────────
+# ── Génération citation DeepSeek ───────────────────────────────────────────────
 
 def generate_quote():
     jft = scrape_jft()
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    client = OpenAI(
+        api_key  = DEEPSEEK_API_KEY,
+        base_url = "https://api.deepseek.com",
+    )
     prompt = (
         "Tu es un créateur de contenu Instagram bienveillant spécialisé en addiction et rétablissement.\n"
         "Voici la pensée du jour en anglais :\n\n"
@@ -108,8 +110,13 @@ def generate_quote():
         "7. Si tu veux un saut de ligne utilise | (pipe)\n"
         "8. Réponds UNIQUEMENT avec la phrase, rien d'autre"
     )
-    resp = model.generate_content(prompt)
-    raw  = resp.text.strip()
+    resp = client.chat.completions.create(
+        model       = "deepseek-chat",
+        messages    = [{"role": "user", "content": prompt}],
+        max_tokens  = 256,
+        temperature = 0.7,
+    )
+    raw = resp.choices[0].message.content.strip()
     return raw.replace(" | ", "\n").replace("|", "\n")
 
 # ── Dessin d'une frame ─────────────────────────────────────────────────────────
