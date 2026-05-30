@@ -1,286 +1,318 @@
 """
 AFDER.RECOVERY — Reels Instagram automatique
-Citation générée par Gemini, vidéo 9:16 animation machine à écrire
-Publié via Instagram Graph API (même compte que le carrousel)
+Scrape JFT (Just For Today - NA) → adapte en français via Gemini
+Crée une vidéo 9:16 1080x1920 avec animation machine à écrire
+Publie sur Instagram via Cloudinary + Graph API
 """
 
-import os, math, random, tempfile, requests
-from datetime import datetime
+import os, math, tempfile, time, requests, datetime, base64, json
+from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-from moviepy.editor import AudioFileClip
-from moviepy.video.VideoClip import VideoClip
+from moviepy.editor import VideoClip
 import cloudinary, cloudinary.uploader
+import google.generativeai as genai
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-IG_TOKEN       = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-IG_USER_ID     = os.environ["INSTAGRAM_USER_ID"]
+GEMINI_API_KEY  = os.environ["GEMINI_API_KEY"]
+IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
+GH_TOKEN        = os.environ["GH_TOKEN"]
+REPO            = "mystofila/instagram-auto-post"
+JFT_URL         = "https://www.jftna.org/jft/"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
     api_key    = os.environ["CLOUDINARY_API_KEY"],
     api_secret = os.environ["CLOUDINARY_API_SECRET"],
 )
+genai.configure(api_key=GEMINI_API_KEY)
 
-WIDTH, HEIGHT = 1080, 1920
-DURATION      = 13
-FPS           = 30
-FONT_SIZE_Q   = 62
-SAFE_MARGIN   = 95
-LINE_HEIGHT   = 92
+# ── Vidéo ──────────────────────────────────────────────────────────────────────
+WIDTH, HEIGHT  = 1080, 1920
+DURATION       = 13
+FPS            = 30
+FONT_SIZE      = 58
+FONT_SIZE_TAG  = 32
+SAFE_MARGIN    = 90
+LINE_HEIGHT    = 84
 
-GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
-]
-
-# ── Palettes AFDER (douces, bienveillantes) ────────────────────────────────────
+# ── Palettes (1 par jour) ──────────────────────────────────────────────────────
 PALETTES = [
-    {"bg": "#1A0A2E", "a1": "#6B21A8", "a2": "#E879F9", "txt": "#FAF5FF", "tag": "#C084FC"},
-    {"bg": "#0C1A2E", "a1": "#1E40AF", "a2": "#38BDF8", "txt": "#EFF6FF", "tag": "#7DD3FC"},
-    {"bg": "#0F1F0F", "a1": "#166534", "a2": "#4ADE80", "txt": "#F0FDF4", "tag": "#86EFAC"},
-    {"bg": "#1F0A0A", "a1": "#991B1B", "a2": "#FB923C", "txt": "#FFF7ED", "tag": "#FCA5A5"},
-    {"bg": "#1A0F1F", "a1": "#831843", "a2": "#F472B6", "txt": "#FDF2F8", "tag": "#F9A8D4"},
-    {"bg": "#111111", "a1": "#1C1C1C", "a2": "#F59E0B", "txt": "#FFFBEB", "tag": "#FCD34D"},
+    {"bg":"#0D0D1A","a1":"#7B2FBE","a2":"#E040FB","text":"#F5F0FF","tag":"#9E7BC4"},
+    {"bg":"#0A1628","a1":"#1565C0","a2":"#00E5FF","text":"#E3F2FD","tag":"#6EB3D4"},
+    {"bg":"#0F1F0F","a1":"#1B5E20","a2":"#69F0AE","text":"#F1F8E9","tag":"#7AB88A"},
+    {"bg":"#1A0A00","a1":"#BF360C","a2":"#FF6D00","text":"#FFF8F1","tag":"#C4906A"},
+    {"bg":"#1A0010","a1":"#880E4F","a2":"#F06292","text":"#FCE4EC","tag":"#C47A95"},
+    {"bg":"#0A0A0A","a1":"#1a1a1a","a2":"#FFD600","text":"#FFFFFF", "tag":"#B8A800"},
+    {"bg":"#001A1A","a1":"#004D4D","a2":"#00E5FF","text":"#FFFFFF", "tag":"#00BCD4"},
 ]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def h2rgb(h):
+def hex_rgb(h):
     h = h.lstrip("#")
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 def blend(c1, c2, t):
     return tuple(int(c1[i] + (c2[i]-c1[i])*t) for i in range(3))
 
-def wrap_px(draw, text, font, max_w):
+def wrap_text(draw, text, font, max_w):
     lines = []
     for hard in text.split("\n"):
         words, cur = hard.split(), ""
         for w in words:
-            test = (cur+" "+w).strip()
-            if draw.textbbox((0,0),test,font=font)[2] > max_w and cur:
+            test = (cur + " " + w).strip()
+            bb = draw.textbbox((0,0), test, font=font)
+            if (bb[2]-bb[0]) > max_w and cur:
                 lines.append(cur); cur = w
             else:
                 cur = test
         if cur: lines.append(cur)
     return lines
 
+# ── Scraping JFT ───────────────────────────────────────────────────────────────
+
+def scrape_jft():
+    r = requests.get(JFT_URL, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+    cells = [td.get_text(separator=" ", strip=True) for td in soup.find_all("td")]
+    cells = [c for c in cells if c]
+    if len(cells) < 5:
+        raise ValueError(f"Structure JFT inattendue : {len(cells)} cellules")
+    titre = cells[1]
+    jft   = next((c for c in reversed(cells) if c.lower().startswith("just for today")), cells[-1])
+    print(f"JFT titre : {titre}")
+    print(f"JFT pensée : {jft}")
+    return {"titre": titre, "jft": jft}
+
 # ── Génération citation Gemini ─────────────────────────────────────────────────
 
-def generate_quote() -> str:
-    from google import genai
-
-    prompt = """Tu es créateur de contenu Instagram pour @afder.recovery (pair-aidance, addiction, rétablissement).
-Génère UNE citation percutante et bienveillante en français.
-Thèmes : courage, fierté du chemin, douceur envers soi, rechute ≠ échec, espoir, liberté, pair-aidance.
-Maximum 15 mots, français correct avec accents, direct et chaleureux.
-Zéro mot anglais. Pas de guillemets ni hashtags.
-Pour un saut de ligne entre deux idées utilise | (pipe).
-Réponds UNIQUEMENT avec la citation."""
-
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    for model in GEMINI_MODELS:
-        try:
-            print(f"Gemini : essai {model}…")
-            r = client.models.generate_content(model=model, contents=prompt)
-            raw = r.text.strip()
-            return raw.replace(" | ", "\n").replace("|", "\n")
-        except Exception as e:
-            print(f"  ✗ {model} : {e}")
-
-    # Fallback citations AFDER
-    return random.choice([
-        "Chaque jour sans rechute est une victoire.\nSois fier de toi.",
-        "Tu n'es pas ton passé.\nTu es ton courage d'aujourd'hui.",
-        "La rechute n'est pas la fin.\nC'est un détour vers ta liberté.",
-        "Doux avec toi-même, fort dans ta démarche.",
-        "Un jour à la fois, tu bâtis une vie nouvelle.",
-        "Le rétablissement n'est pas une ligne droite.\nC'est un chemin qui t'appartient.",
-        "Tu mérites de guérir.\nPas seulement de survivre.",
-    ])
+def generate_quote():
+    jft = scrape_jft()
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    prompt = (
+        "Tu es un créateur de contenu Instagram bienveillant spécialisé en addiction et rétablissement.\n"
+        "Voici la pensée du jour en anglais :\n\n"
+        f"TITRE : {jft['titre']}\n"
+        f"PENSÉE : {jft['jft']}\n\n"
+        "Ta mission : traduire et adapter cette pensée en français pour Instagram Reels.\n\n"
+        "RÈGLES OBLIGATOIRES :\n"
+        "1. Commence TOUJOURS par 'Juste pour aujourd'hui :'\n"
+        "2. Maximum 15 mots après les deux points\n"
+        "3. Phrase COMPLÈTE avec point final\n"
+        "4. Remplace NA / Narcotics Anonymous par 'notre communauté'\n"
+        "5. Remplace Dieu / God / Higher Power / spiritual par 'la force du collectif' ou 'l'entraide'\n"
+        "6. Style : chaleureux, direct, inspirant\n"
+        "7. Si tu veux un saut de ligne utilise | (pipe)\n"
+        "8. Réponds UNIQUEMENT avec la phrase, rien d'autre"
+    )
+    resp = model.generate_content(prompt)
+    raw  = resp.text.strip()
+    return raw.replace(" | ", "\n").replace("|", "\n")
 
 # ── Dessin d'une frame ─────────────────────────────────────────────────────────
 
-def draw_frame(quote: str, palette: dict, progress: float) -> np.ndarray:
-    bg  = h2rgb(palette["bg"])
-    a1  = h2rgb(palette["a1"])
-    a2  = h2rgb(palette["a2"])
-    txt = h2rgb(palette["txt"])
-    tag = h2rgb(palette["tag"])
+def draw_frame(quote, palette, progress):
+    bg  = hex_rgb(palette["bg"])
+    a1  = hex_rgb(palette["a1"])
+    a2  = hex_rgb(palette["a2"])
+    txt = hex_rgb(palette["text"])
+    tag = hex_rgb(palette["tag"])
 
-    # Fond dégradé
     pixels = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
     for y in range(HEIGHT):
-        pixels[y, :] = blend(bg, a1, (y/HEIGHT)*0.32)
+        pixels[y, :] = blend(bg, a1, (y/HEIGHT)*0.28)
     img  = Image.fromarray(pixels)
     draw = ImageDraw.Draw(img, "RGBA")
     t    = progress * math.pi * 2
 
-    # Formes décoratives
-    draw.ellipse([WIDTH*.75-480, HEIGHT*.75-480, WIDTH*.75+480, HEIGHT*.75+480],
-                 fill=(*a1, int(55+20*math.sin(t))))
-    draw.ellipse([-80, -80, 420, 420],
-                 fill=(*a2, int(35+15*math.sin(t+1.5))))
-    for i in range(-HEIGHT, WIDTH+HEIGHT, 120):
-        draw.line([(i,0),(i+HEIGHT,HEIGHT)], fill=(*a2,12), width=1)
+    # Blobs de fond
+    bx, by = int(WIDTH*.88), int(HEIGHT*.80)
+    draw.ellipse([bx-520,by-520,bx+520,by+520], fill=(*a1, int(55+22*math.sin(t))))
+    bx2,by2 = int(WIDTH*.08), int(HEIGHT*.12)
+    draw.ellipse([bx2-360,by2-360,bx2+360,by2+360], fill=(*a2, int(35+16*math.sin(t+1.5))))
 
-    # Losange décoratif bas droite
-    sq, sx, sy = 80, WIDTH-110, HEIGHT-320
-    draw.polygon([(sx,sy-sq),(sx+sq,sy),(sx,sy+sq),(sx-sq,sy)], fill=(*a1,80))
+    # Lignes diagonales
+    for i in range(-HEIGHT, WIDTH+HEIGHT, 100):
+        draw.line([(i,0),(i+HEIGHT,HEIGHT)], fill=(*a2,15), width=1)
 
-    # Arc décoratif bas
-    arc_r = 180; axc, ayc = WIDTH//2, HEIGHT-180
-    draw.arc([axc-arc_r, ayc-70, axc+arc_r, ayc+70],
-             start=0, end=180, fill=(*a2,100), width=5)
+    # Triangle haut-droit
+    off = int(math.sin(t*.9)*14)
+    draw.polygon([(WIDTH-60+off,100),(WIDTH-220+off,310),(WIDTH-10+off,310)], fill=(*a2,50))
 
-    # Ligne accent en haut
-    draw.rectangle([SAFE_MARGIN+10, HEIGHT//2-260, SAFE_MARGIN+140, HEIGHT//2-256],
-                   fill=(*a2, 220))
+    # Losange bas-gauche
+    sq,sx,sy = 78, 100, HEIGHT-270
+    draw.polygon([(sx,sy-sq),(sx+sq,sy),(sx,sy+sq),(sx-sq,sy)], fill=(*a1,72))
+
+    # Cercle accent
+    draw.ellipse([WIDTH-155,65,WIDTH-55,165], fill=(*a2,40))
+
+    # Arc bas
+    ar=160; axc,ayc = WIDTH//2, HEIGHT-160
+    draw.arc([axc-ar,ayc-60,axc+ar,ayc+60], start=0, end=180, fill=(*a2,110), width=4)
 
     # Polices
     try:
-        font_q = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", FONT_SIZE_Q)
-        font_g = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", 145)
-        font_t = ImageFont.truetype("/usr/share/fonts/truetype/open-sans/OpenSans-Regular.ttf", 36)
-        font_h = ImageFont.truetype("/usr/share/fonts/truetype/open-sans/OpenSans-Bold.ttf", 42)
+        font_q = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", FONT_SIZE)
+        font_g = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf", 130)
+        font_t = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", FONT_SIZE_TAG)
     except Exception:
-        font_q = font_g = font_t = font_h = ImageFont.load_default()
+        font_q = font_g = font_t = ImageFont.load_default()
 
-    safe_w    = WIDTH - 2*SAFE_MARGIN
-    all_lines = wrap_px(draw, quote, font_q, safe_w)
-    total_h   = len(all_lines) * LINE_HEIGHT
-    start_y   = (HEIGHT - total_h) // 2
+    safe_w      = WIDTH - 2*SAFE_MARGIN
+    all_lines   = wrap_text(draw, quote, font_q, safe_w)
+    total_h     = len(all_lines) * LINE_HEIGHT
+    text_start  = (HEIGHT - total_h) // 2
+
+    # Barre séparateur
+    bar_y = text_start - 52
+    draw.rectangle([SAFE_MARGIN+10, bar_y, SAFE_MARGIN+130, bar_y+3], fill=(*a2,200))
 
     # Guillemet ouvrant
-    draw.text((SAFE_MARGIN-10, start_y-130), "\u201c", font=font_g,
-              fill=(*a2, 90))
+    draw.text((SAFE_MARGIN-8, text_start-105), "\u201c", font=font_g, fill=(*a2,85))
 
-    # Texte machine à écrire
+    # Animation machine à écrire
     TYPING_END  = 0.72
     typing_prog = min(1.0, progress/TYPING_END)
     vis_chars   = math.ceil(typing_prog * len(quote))
-    vis_lines   = wrap_px(draw, quote[:vis_chars].rstrip(), font_q, safe_w)
+    vis_lines   = wrap_text(draw, quote[:vis_chars].rstrip(), font_q, safe_w)
 
     for i, line in enumerate(vis_lines):
-        y = start_y + i*LINE_HEIGHT
-        draw.text((SAFE_MARGIN+3, y+3), line, font=font_q, fill=(*bg, 115))
-        draw.text((SAFE_MARGIN, y),     line, font=font_q, fill=(*txt, 255))
+        y = text_start + i*LINE_HEIGHT
+        draw.text((SAFE_MARGIN+3, y+3), line, font=font_q, fill=(*bg,120))
+        draw.text((SAFE_MARGIN,   y),   line, font=font_q, fill=(*txt,255))
 
     # Curseur clignotant
     if typing_prog < 1.0 and vis_lines:
         if (int(progress*DURATION*FPS)//18) % 2 == 0:
             lw    = draw.textbbox((0,0), vis_lines[-1], font=font_q)[2]
-            cur_x = SAFE_MARGIN + lw + 7
-            cur_y = start_y + (len(vis_lines)-1)*LINE_HEIGHT
-            draw.rectangle([cur_x, cur_y+5, cur_x+5, cur_y+FONT_SIZE_Q+5],
-                           fill=(*a2, 240))
+            cur_x = SAFE_MARGIN + lw + 6
+            cur_y = text_start + (len(vis_lines)-1)*LINE_HEIGHT
+            draw.rectangle([cur_x,cur_y+5,cur_x+4,cur_y+FONT_SIZE+5], fill=(*a2,240))
 
-    # Tags et handle en fondu
+    # Hashtags en fondu
     if progress > TYPING_END:
-        fade = int(min(210, (progress-TYPING_END)/(1-TYPING_END)*210))
-        tag_txt = "#pairaidance  #rétablissement  #sobriété"
-        tw = draw.textbbox((0,0), tag_txt, font=font_t)[2]
-        draw.text(((WIDTH-tw)//2, HEIGHT-220), tag_txt, font=font_t,
-                  fill=(*tag, fade))
-        handle = "@AFDER.RECOVERY"
-        hw = draw.textbbox((0,0), handle, font=font_h)[2]
-        draw.text(((WIDTH-hw)//2, HEIGHT-160), handle, font=font_h,
-                  fill=(*txt, fade))
+        alpha    = int(min(200, (progress-TYPING_END)/(1-TYPING_END)*200))
+        tag_text = "#rétablissement  #addiction  #sobriété"
+        tw       = draw.textbbox((0,0), tag_text, font=font_t)[2]
+        draw.text(((WIDTH-tw)//2, HEIGHT-130), tag_text, font=font_t, fill=(*tag,alpha))
+
+    # Handle AFDER
+    try:
+        font_h = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
+    except Exception:
+        font_h = ImageFont.load_default()
+    handle = "@AFDER.RECOVERY"
+    hw = draw.textbbox((0,0), handle, font=font_h)[2]
+    draw.text(((WIDTH-hw)//2, HEIGHT-80), handle, font=font_h, fill=(*tag,180))
 
     return np.array(img)
 
 # ── Génération vidéo ───────────────────────────────────────────────────────────
 
-def make_video(quote: str, output_path: str):
-    palette = random.choice(PALETTES)
+def make_video(quote, output_path):
+    palette = PALETTES[datetime.datetime.now().weekday()]
     print(f"Palette : {palette['bg']} → {palette['a2']}")
 
     def make_frame(t):
         return draw_frame(quote, palette, t/DURATION)
 
     clip = VideoClip(make_frame, duration=DURATION).set_fps(FPS)
-
-    # Musique optionnelle (dossier assets/music/)
-    music_dir = os.path.join(os.path.dirname(__file__), "assets/music")
-    mp3s = [f for f in os.listdir(music_dir) if f.endswith(".mp3")] \
-           if os.path.isdir(music_dir) else []
-    if mp3s:
-        audio = AudioFileClip(os.path.join(music_dir, random.choice(mp3s))) \
-                    .subclip(0, DURATION).volumex(0.28)
-        clip = clip.set_audio(audio)
-
     clip.write_videofile(output_path, fps=FPS, codec="libx264",
-                         audio_codec="aac", logger=None)
+                         audio=False, logger=None)
     print(f"Vidéo générée : {output_path}")
 
-# ── Publication Instagram Reels ────────────────────────────────────────────────
+# ── Refresh token Instagram ────────────────────────────────────────────────────
 
-def publish_reel(video_url: str, caption: str) -> str:
-    """Publie un Reel via l'Instagram Graph API."""
+def refresh_instagram_token(token):
+    r = requests.get(
+        "https://graph.instagram.com/refresh_access_token",
+        params={"grant_type": "ig_refresh_token", "access_token": token},
+    )
+    data = r.json()
+    if "access_token" not in data:
+        print(f"Token non rafraîchi : {data}")
+        return token
+    new_token = data["access_token"]
+    print("Token Instagram rafraîchi ✓")
+    pub = requests.get(
+        f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
+        headers={"Authorization": f"token {GH_TOKEN}"},
+    ).json()
+    from nacl import encoding, public as nacl_pub
+    pk  = nacl_pub.PublicKey(pub["key"].encode(), encoding.Base64Encoder())
+    enc = base64.b64encode(nacl_pub.SealedBox(pk).encrypt(new_token.encode())).decode()
+    requests.put(
+        f"https://api.github.com/repos/{REPO}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
+        headers={"Authorization": f"token {GH_TOKEN}"},
+        json={"encrypted_value": enc, "key_id": pub["key_id"]},
+    )
+    return new_token
 
-    # 1. Créer le container média
+# ── Publication Instagram ──────────────────────────────────────────────────────
+
+def publish_reel(video_url, caption):
+    # Étape 1 — créer le container
     r = requests.post(
         f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
         data={
             "media_type":  "REELS",
             "video_url":   video_url,
             "caption":     caption,
-            "share_to_feed": "true",
             "access_token": IG_TOKEN,
         },
     )
     resp = r.json()
-    print(f"Container Reel : {resp}")
     if "id" not in resp:
-        raise Exception(f"Container Reel échoué : {resp}")
+        raise Exception(f"Container Reel failed: {resp}")
     container_id = resp["id"]
+    print(f"Container créé : {container_id}")
 
-    # 2. Attendre que le container soit prêt (polling)
-    import time
+    # Étape 2 — attendre que le container soit prêt
     for attempt in range(20):
-        time.sleep(8)
-        status_r = requests.get(
+        time.sleep(10)
+        status = requests.get(
             f"https://graph.instagram.com/v19.0/{container_id}",
-            params={"fields": "status_code,status", "access_token": IG_TOKEN},
-        )
-        status = status_r.json()
-        code   = status.get("status_code", "")
-        print(f"  Status [{attempt+1}] : {code}")
-        if code == "FINISHED":
+            params={"fields": "status_code", "access_token": IG_TOKEN},
+        ).json()
+        print(f"Status container ({attempt+1}/20) : {status.get('status_code')}")
+        if status.get("status_code") == "FINISHED":
             break
-        if code == "ERROR":
-            raise Exception(f"Encodage Reel échoué : {status}")
+        if status.get("status_code") == "ERROR":
+            raise Exception(f"Container en erreur : {status}")
+    else:
+        raise Exception("Container jamais prêt après 200s")
 
-    # 3. Publier
-    pub_r = requests.post(
+    # Étape 3 — publier
+    r2 = requests.post(
         f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media_publish",
         data={"creation_id": container_id, "access_token": IG_TOKEN},
     )
-    pub = pub_r.json()
-    if "id" not in pub:
-        raise Exception(f"Publication Reel échouée : {pub}")
-    print(f"Reel publié ✓  ID : {pub['id']}")
-    return pub["id"]
+    result = r2.json()
+    print(f"Publié ✓ {result}")
+    return result
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
+    global IG_TOKEN
     print("="*52)
-    print(f"AFDER Reels — {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    print(f"AFDER Reels — {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # 1. Générer la citation
+    IG_TOKEN = refresh_instagram_token(IG_TOKEN)
+
+    # Citation
     quote = generate_quote()
     print(f"Citation : {quote!r}")
 
-    # 2. Générer la vidéo
+    # Vidéo
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
         video_path = tmp.name
     make_video(quote, video_path)
 
-    # 3. Upload sur Cloudinary (vidéo)
+    # Upload Cloudinary
     print("Upload Cloudinary…")
     res = cloudinary.uploader.upload(
         video_path,
@@ -289,24 +321,15 @@ def main():
         access_mode   = "public",
     )
     video_url = res["secure_url"]
-    print(f"Upload ✓  {video_url}")
+    print(f"Cloudinary ✓ {video_url}")
 
-    # 4. Caption Instagram
-    caption_quote = quote.replace("\n", " ")
-    caption = (
-        f"{caption_quote}\n\n"
-        f"━━━━━━━━━━\n"
-        f"@AFDER.RECOVERY · Pair-aidance & Rétablissement\n"
-        f"afder.org\n\n"
-        f"#pairaidance #rétablissement #addiction #sobriété "
-        f"#santémentale #AFDER #courage #guérison"
-    )
-
-    # 5. Publier le Reel
-    publish_reel(video_url, caption)
-
-    # Nettoyage
     os.unlink(video_path)
+
+    # Caption
+    caption = quote.replace("\n", " ") + "\n\n#rétablissement #addiction #sobriété #pairaidance #afder"
+
+    # Publication
+    publish_reel(video_url, caption)
     print("="*52)
 
 if __name__ == "__main__":
