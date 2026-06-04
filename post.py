@@ -1,9 +1,8 @@
 """
 AFDER.RECOVERY — Carrousel Instagram automatique
-Groq        : génère texte
-Pollinations.ai : génère illustration flat design cover (gratuit, sans clé)
-Layout      : zones strictes — illustration 380px max, titre adaptatif
-Slides      : 1080x1080px PNG — Open Sans ExtraBold
+Groq   : génère texte
+Pillow : génère cover dégradé + SVG thématique (100% local, aucune API externe)
+Slides : 1080x1080px PNG — Open Sans ExtraBold
 """
 
 import os, re, json, math, time, random, base64, datetime, requests, io
@@ -484,123 +483,107 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
     return img
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — POLLINATIONS.AI : IMAGE COVER (gratuit, sans clé)
+# SECTION 6 — COVER PILLOW : dégradé + formes géométriques + SVG (100% local)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-POLLINATIONS_PROMPTS = {
-    "famille":      "flat design illustration, family support and connection, warm pastel colors, simple geometric shapes, caring figures, soft background, mental health awareness poster style, no text, no watermark",
-    "rechute":      "flat design illustration, person walking forward on a winding path, resilience and hope, muted tones, simple geometric shapes, gentle journey metaphor, mental health awareness style, no text, no watermark",
-    "honte":        "flat design illustration, person emerging from shadow into light, self-compassion theme, soft warm colors, simple geometric shapes, gentle and hopeful mood, mental health awareness poster, no text, no watermark",
-    "pair":         "flat design illustration, two figures side by side in solidarity, peer support theme, warm pastel colors, simple geometric shapes, community and empathy, mental health awareness style, no text, no watermark",
-    "frontiere":    "flat design illustration, person standing calmly with clear personal space, boundaries and self-respect, soft colors, simple geometric shapes, empowerment theme, mental health awareness poster, no text, no watermark",
-    "codep":        "flat design illustration, two overlapping circles with figures finding balance, codependency awareness, soft pastel colors, simple geometric shapes, equilibrium theme, mental health style, no text, no watermark",
-    "deuil":        "flat design illustration, person holding a glowing light, grief and healing journey, soft muted colors, simple geometric shapes, gentle hopeful mood, mental health awareness poster, no text, no watermark",
-    "soin":         "flat design illustration, person nurturing a small plant or light, self-care theme, warm soft colors, simple geometric shapes, growth and healing mood, mental health awareness style, no text, no watermark",
-    "default":      "flat design illustration, single figure in calm contemplative pose, mental health and wellbeing, soft pastel colors, simple geometric shapes, peaceful mood, awareness campaign poster style, no text, no watermark",
+# Palettes thématiques : (bg_haut, bg_bas, accent, accent2)
+COVER_PALETTES = {
+    "famille":  ((245,235,255), (210,195,240), (139, 92,246), (196,181,253)),
+    "rechute":  ((230,245,255), (190,220,245), ( 37,120,200), (147,197,253)),
+    "honte":    ((255,240,235), (245,210,200), (220, 90, 60), (252,165,145)),
+    "pair":     ((230,250,240), (190,235,215), ( 34,150,100), (110,231,183)),
+    "frontiere":((255,248,230), (245,225,185), (202,138, 44), (253,211,115)),
+    "codep":    ((235,240,255), (200,215,250), ( 79, 98,210), (165,180,252)),
+    "deuil":    ((245,235,255), (220,205,245), (109, 40,217), (196,155,253)),
+    "soin":     ((230,248,245), (190,232,225), ( 20,150,130), (110,220,200)),
+    "default":  ((235,245,255), (200,220,245), ( 59,130,246), (147,197,253)),
 }
 
-def _get_prompt(sujet: str) -> str:
+def _get_palette(sujet: str) -> tuple:
     s = sujet.lower()
-    if any(w in s for w in ["famille","parent","enfant","proche","silence"]): return POLLINATIONS_PROMPTS["famille"]
-    if any(w in s for w in ["rechute","linéaire","chemin","neuroscience"]):   return POLLINATIONS_PROMPTS["rechute"]
-    if any(w in s for w in ["honte","deuil","identité"]):                     return POLLINATIONS_PROMPTS["honte"]
-    if any(w in s for w in ["pair","aidance","vécu"]):                        return POLLINATIONS_PROMPTS["pair"]
-    if any(w in s for w in ["frontière","saine","poser"]):                    return POLLINATIONS_PROMPTS["frontiere"]
-    if any(w in s for w in ["codépendance","co-dépendance","épuisant","perdre"]): return POLLINATIONS_PROMPTS["codep"]
-    if any(w in s for w in ["soin","signes","prends"]):                       return POLLINATIONS_PROMPTS["soin"]
-    return POLLINATIONS_PROMPTS["default"]
+    if any(w in s for w in ["famille","parent","enfant","proche","silence"]): return COVER_PALETTES["famille"]
+    if any(w in s for w in ["rechute","linéaire","chemin","neuroscience"]):   return COVER_PALETTES["rechute"]
+    if any(w in s for w in ["honte","deuil","identité"]):                     return COVER_PALETTES["honte"]
+    if any(w in s for w in ["pair","aidance","vécu"]):                        return COVER_PALETTES["pair"]
+    if any(w in s for w in ["frontière","saine","poser"]):                    return COVER_PALETTES["frontiere"]
+    if any(w in s for w in ["codépendance","co-dépendance","épuisant","perdre"]): return COVER_PALETTES["codep"]
+    if any(w in s for w in ["soin","signes","prends"]):                       return COVER_PALETTES["soin"]
+    return COVER_PALETTES["default"]
 
-def fetch_cover_image(sujet: str) -> Image.Image:
-    """Génère l'image cover via Pollinations.ai — gratuit, sans clé."""
-    prompt = _get_prompt(sujet)
-    seed   = random.randint(1, 99999)
-    url    = (
-        f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}"
-        f"?width=1024&height=1024&nologo=true&seed={seed}&model=flux"
-    )
-    print(f"Pollinations.ai : appel (seed={seed})…")
-    resp = requests.get(url, timeout=90)
-    print(f"Pollinations.ai : status {resp.status_code}")
+def make_cover_bg(sujet: str, svg: str) -> Image.Image:
+    """Génère le fond cover : dégradé + formes géométriques + SVG thématique."""
+    bg1, bg2, acc, acc2 = _get_palette(sujet)
 
-    if resp.status_code != 200:
-        raise RuntimeError(f"Pollinations {resp.status_code} — {resp.text[:200]}")
+    # Dégradé vertical pixel par pixel
+    import numpy as np
+    arr = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    for y in range(SIZE):
+        t = y / SIZE
+        arr[y, :] = [
+            int(bg1[0] + (bg2[0]-bg1[0])*t),
+            int(bg1[1] + (bg2[1]-bg1[1])*t),
+            int(bg1[2] + (bg2[2]-bg1[2])*t),
+        ]
+    img = Image.fromarray(arr)
+    d = ImageDraw.Draw(img, "RGBA")
 
-    img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    print(f"Pollinations.ai : image reçue {img.size} ✓")
-    return img.resize((SIZE, SIZE), Image.LANCZOS)
+    # Formes décoratives
+    d.ellipse([680, -180, 1260, 400],  fill=(*acc2, 80))
+    d.ellipse([-150, 700, 350, 1200],  fill=(*acc,  45))
+    d.ellipse([820, 350, 1020, 550],   fill=(*acc,  60))
+    d.rectangle([60, 520, 420, 524],   fill=(*acc,  180))
+    sq, cx, cy = 90, 160, 420
+    d.polygon([(cx,cy-sq),(cx+sq,cy),(cx,cy+sq),(cx-sq,cy)], fill=(*acc2, 120))
+    d.ellipse([900, 820, 960, 880],    fill=(*acc,  90))
+    d.ellipse([80, 180, 120, 220],     fill=(*acc2, 150))
+    d.ellipse([950, 180, 980, 210],    fill=(*acc,  120))
+
+    # Illustration SVG centrée
+    illus = _svg_to_pil(svg, 420)
+    img.paste(illus, ((SIZE-420)//2, 200), illus)
+
+    print("Cover Pillow générée ✓")
+    return img
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 7 — CRÉATION DES SLIDES
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
-    """
-    Slide 1 — cover.
-    Priorité : image Pollinations.ai plein fond + overlay gradient + titre blanc.
-    Fallback  : fond gris + illustration SVG + titre sombre.
-    """
-    ILLUS_SIZE = 380
-    ILLUS_ZONE_Y1, ILLUS_ZONE_Y2 = 415, 950
-    TITRE_ZONE_Y1, TITRE_ZONE_Y2 = 55,  400
+    """Slide 1 — fond dégradé Pillow + SVG thématique + titre sombre en bas."""
+    TITRE_ZONE_Y1, TITRE_ZONE_Y2 = 680, 980
 
-    ai_ok = False
-    try:
-        bg = fetch_cover_image(sujet)
-        ai_ok = True
-    except Exception as e:
-        print(f"Pollinations.ai indisponible ({e}) → fallback SVG")
+    img = make_cover_bg(sujet, svg)
+    d   = ImageDraw.Draw(img)
 
-    if ai_ok:
-        img = bg.copy()
-        overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        for i in range(520):
-            alpha = int((i / 520) ** 1.5 * 195)
-            od.line([(0, SIZE - 520 + i), (SIZE, SIZE - 520 + i)], fill=(0, 0, 0, alpha))
-        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-        d = ImageDraw.Draw(img)
+    # Overlay blanc semi-transparent en bas pour le titre
+    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    od = ImageDraw.Draw(overlay)
+    for i in range(380):
+        alpha = int((i/380)**1.2 * 210)
+        od.line([(0, SIZE-380+i),(SIZE, SIZE-380+i)], fill=(255,255,255,alpha))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    d   = ImageDraw.Draw(img)
 
-        margin = 55
-        max_w  = SIZE - margin * 2
-        f = lines = None
-        for font_size in [100, 86, 72, 60, 50]:
-            f     = F("OpenSans-ExtraBold.ttf", font_size)
-            lines = _wrap(d, titre.upper(), f, max_w)
-            if len(lines) <= 3:
-                break
-        bloc_h = len(lines) * int(f.size * 1.1)
-        y = SIZE - 160 - bloc_h
-        for line in lines:
-            d.text((margin + 3, y + 3), line, font=f, fill=(0, 0, 0, 160))
-            d.text((margin,     y    ), line, font=f, fill=(255, 255, 255))
-            y += int(f.size * 1.1)
+    # Titre adaptatif
+    margin = 55
+    max_w  = SIZE - margin * 2
+    _, _, acc, _ = _get_palette(sujet)
+    f = lines = None
+    for font_size in [108, 92, 78, 66, 54]:
+        f     = F("OpenSans-ExtraBold.ttf", font_size)
+        lines = _wrap(d, titre.upper(), f, max_w)
+        if len(lines) * int(font_size * 1.08) <= (TITRE_ZONE_Y2 - TITRE_ZONE_Y1 - 20):
+            break
+    bloc_h = len(lines) * int(f.size * 1.08)
+    y = TITRE_ZONE_Y1 + (TITRE_ZONE_Y2 - TITRE_ZONE_Y1 - bloc_h) // 2
+    for line in lines:
+        d.text((margin, y), line, font=f, fill=DARK)
+        y += int(f.size * 1.08)
 
-    else:
-        img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
-        img = _blob(img, SIZE - 30, SIZE // 2 + 60, 340, 420, (188, 200, 215), alpha=65)
-        img = _blob(img, -20,       SIZE - 50,      160, 160, (190, 205, 215), alpha=40)
+    # Barre accent sous le titre
+    d.rectangle([margin, y+8, margin+200, y+12], fill=acc)
 
-        illus = _svg_to_pil(svg, ILLUS_SIZE)
-        ix = (SIZE - ILLUS_SIZE) // 2
-        iy = ILLUS_ZONE_Y1 + (ILLUS_ZONE_Y2 - ILLUS_ZONE_Y1 - ILLUS_SIZE) // 2
-        img.paste(illus, (ix, iy), illus)
-
-        d = ImageDraw.Draw(img)
-        margin = 55
-        max_w  = SIZE - margin * 2
-        f = lines = None
-        for font_size in [108, 92, 78, 66, 54]:
-            f     = F("OpenSans-ExtraBold.ttf", font_size)
-            lines = _wrap(d, titre.upper(), f, max_w)
-            if len(lines) * int(font_size * 1.08) <= (TITRE_ZONE_Y2 - TITRE_ZONE_Y1 - 20):
-                break
-        bloc_h = len(lines) * int(f.size * 1.08)
-        y = TITRE_ZONE_Y1 + (TITRE_ZONE_Y2 - TITRE_ZONE_Y1 - bloc_h) // 2
-        for line in lines:
-            d.text((margin, y), line, font=f, fill=DARK)
-            y += int(f.size * 1.08)
-
-    d = ImageDraw.Draw(img)
     _sep(d)
     _arrow_btn(d, SIZE - 100, SIZE - 100)
     _nav_dots(d, total, 0)
