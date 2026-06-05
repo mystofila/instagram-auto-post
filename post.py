@@ -514,17 +514,15 @@ def make_cover_bg(sujet: str, svg: str) -> Image.Image:
     """Génère le fond cover : dégradé + formes géométriques + SVG thématique."""
     bg1, bg2, acc, acc2 = _get_palette(sujet)
 
-    # Dégradé vertical pixel par pixel
-    import numpy as np
-    arr = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    # Dégradé vertical via Pillow pur
+    img = Image.new("RGB", (SIZE, SIZE))
+    draw_grad = ImageDraw.Draw(img)
     for y in range(SIZE):
         t = y / SIZE
-        arr[y, :] = [
-            int(bg1[0] + (bg2[0]-bg1[0])*t),
-            int(bg1[1] + (bg2[1]-bg1[1])*t),
-            int(bg1[2] + (bg2[2]-bg1[2])*t),
-        ]
-    img = Image.fromarray(arr)
+        r = int(bg1[0] + (bg2[0]-bg1[0])*t)
+        g = int(bg1[1] + (bg2[1]-bg1[1])*t)
+        b = int(bg1[2] + (bg2[2]-bg1[2])*t)
+        draw_grad.line([(0,y),(SIZE,y)], fill=(r,g,b))
     d = ImageDraw.Draw(img, "RGBA")
 
     # Formes décoratives
