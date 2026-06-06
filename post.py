@@ -648,7 +648,6 @@ def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
             y += int(f.size*1.08)
 
     d = ImageDraw.Draw(img)
-    _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
     _nav_dots(d, total, 0)
 
