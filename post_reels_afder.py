@@ -261,19 +261,29 @@ def refresh_instagram_token(token):
 # ── Publication Instagram ──────────────────────────────────────────────────────
 
 def publish_reel(video_url, caption):
-    # Étape 1 — créer le container
-    r = requests.post(
-        f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
-        data={
-            "media_type":  "REELS",
-            "video_url":   video_url,
-            "caption":     caption,
-            "access_token": IG_TOKEN,
-        },
-    )
-    resp = r.json()
-    if "id" not in resp:
-        raise Exception(f"Container Reel failed: {resp}")
+    # Étape 1 — créer le container (avec retry sur erreurs transitoires)
+    resp = None
+    for attempt in range(5):
+        r = requests.post(
+            f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
+            data={
+                "media_type":  "REELS",
+                "video_url":   video_url,
+                "caption":     caption,
+                "access_token": IG_TOKEN,
+            },
+        )
+        resp = r.json()
+        if "id" in resp:
+            break
+        is_transient = resp.get("error", {}).get("is_transient", False)
+        print(f"Container creation failed (attempt {attempt+1}/5) : {resp}")
+        if is_transient and attempt < 4:
+            wait = 20 * (attempt + 1)
+            print(f"Erreur transitoire, retry dans {wait}s…")
+            time.sleep(wait)
+        else:
+            raise Exception(f"Container Reel failed: {resp}")
     container_id = resp["id"]
     print(f"Container créé : {container_id}")
 
