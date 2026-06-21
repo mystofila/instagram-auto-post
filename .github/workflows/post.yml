@@ -2,7 +2,7 @@ name: AFDER — Carrousel & Reels Instagram
 on:
   schedule:
     - cron: '42 9 * * *'      # Carrousel — tous les jours 9h42 UTC
-    - cron: '0 12 * * 1,3,5'  # Reels — lun/mer/ven 12h00 UTC
+    - cron: '0 12 * * *'      # Reels — tous les jours 12h00 UTC
   workflow_dispatch:
     inputs:
       job:
@@ -44,11 +44,11 @@ jobs:
           GH_TOKEN:               ${{ secrets.GH_TOKEN }}
         run: python post.py
 
-  # ── REELS : lundi, mercredi, vendredi ───────────────────────────────────────
+  # ── REELS : tous les jours ──────────────────────────────────────────────────
   reels:
     runs-on: ubuntu-latest
     if: >
-      github.event.schedule == '0 12 * * 1,3,5' ||
+      github.event.schedule == '0 12 * * *' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'reels')
     steps:
       - uses: actions/checkout@v4
