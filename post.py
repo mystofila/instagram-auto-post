@@ -19,7 +19,7 @@ IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "llama-3.3-70b-versatile"
+GROQ_MODEL      = "qwen/qwen3.6-27b"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
