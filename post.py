@@ -1,8 +1,8 @@
 """
 AFDER.RECOVERY — Carrousel Instagram automatique
-Groq   : génère texte
-Pillow : génère cover dégradé + SVG thématique (100% local, aucune API externe)
-Slides : 1080x1080px PNG — Open Sans ExtraBold
+Groq  : génère texte + SVG illustration cartoon (un seul appel)
+Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déborde
+Slides: 1080x1080px PNG — Open Sans ExtraBold
 """
 
 import os, re, json, math, time, random, base64, datetime, requests, io
@@ -19,7 +19,7 @@ IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "qwen/qwen3.6-27b"
+GROQ_MODEL      = "qwen/qwen3.6-27b"  # no-thinking via extra_body
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -122,39 +122,38 @@ def refresh_instagram_token(token):
     return new_token
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — GROQ : TEXTE UNIQUEMENT
+# SECTION 3 — GROQ : TEXTE + SVG
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """Tu es rédacteur expert en santé mentale, addiction et pair-aidance pour Instagram.
+SYSTEM_PROMPT = """/no_think
+Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
 Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, sans markdown, sans backticks.
 
 LANGUE : Tout le texte doit être en FRANÇAIS CORRECT avec accents (é,è,ê,à,ç).
 Zéro mot anglais. Orthographe et grammaire parfaites.
 
-TITRE (accroche) : maximum 5 MOTS en français, MAJUSCULES, percutant et SPÉCIFIQUE au sujet.
-Le titre doit être une vérité concrète ou une question directe sur le sujet.
-INTERDIT : titres génériques comme "TU N'ES PAS SEUL", "LA GUÉRISON EST POSSIBLE", "NOUS SOMMES LÀ".
-INTERDIT : tout mot anglais (MENTAL, HEALTH, RECOVERY, SELF, CARE, etc.)
-Exemples VALIDES pour "La honte en addiction" : "LA HONTE N'EST PAS UNE FAUTE", "HONTE ET ADDICTION : LE PIÈGE"
-Exemples VALIDES pour "Rechute" : "RECHUTER N'EST PAS ÉCHOUER", "LA RECHUTE FAIT PARTIE DU CHEMIN"
-Exemples VALIDES pour "Codépendance" : "AIDER SANS SE PERDRE SOI-MÊME", "QUAND AIDER DEVIENT UNE PRISON"
+TITRE (accroche) : maximum 5 MOTS en français, majuscules, percutant.
+Exemples valides : "LA HONTE N'EST PAS UNE FATALITÉ", "TU N'ES PAS SEUL"
+Exemples INTERDITS : tout mot anglais comme MENTAL, HEALTH, RECOVERY, SELF, CARE.
 
-SLIDES : contenu factuel, concret, basé sur des mécanismes psychologiques réels.
-Pas de slogans. Pas de "tu n'es pas seul". Des faits, des processus, des insights actionnables.
-Tutoiement bienveillant. Max 190 caractères par slide.
+Règles SVG absolues :
+- Commence par : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+- Termine par : </svg>
+- Utilise UNIQUEMENT : circle, ellipse, rect, path, line, polygon, g
+- INTERDIT : text, image, use, symbol, defs, filter, style, script
+- Fond obligatoire : <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
+- Personnages cartoon : têtes rondes, yeux ronds noirs, sourires, joues roses
+- Couleurs peaux #FBBF8A ou #C68642, vêtements colorés vifs
+- Étoiles décoratives #FCD34D
+- Minimum 15 éléments SVG"""
 
-CAPTION : accrocheur, avec question ouverte pour engager la communauté. 3-5 hashtags pertinents."""
+def generate_with_retry(client, sujet, max_retries=3):
+    prompt = f"""Crée un carrousel Instagram pour @afder.recovery sur : "{sujet}"
 
-def generate_with_retry(client, sujet, titres_deja_utilises, max_retries=3):
-    contrainte_titres = ""
-    if titres_deja_utilises:
-        liste = ", ".join(f'"{t}"' for t in titres_deja_utilises[-10:])
-        contrainte_titres = f"\nTITRES DÉJÀ UTILISÉS À ÉVITER ABSOLUMENT : {liste}"
+Réponds avec ce JSON sur UNE SEULE LIGNE (le svg sans retours à la ligne) :
+{{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES SANS MOT ANGLAIS","slides":[{{"contenu":"2-3 phrases bienveillantes max 190 chars tutoiement"}},{{"contenu":"Suite concrète max 190 chars"}}],"cta":"CTA FRANÇAIS MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante française max 80 chars","caption":"texte Instagram français 5 hashtags max 190 chars","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 500 500\\">ILLUSTRATION CARTOON COLORÉE</svg>"}}
 
-    prompt = f"""Crée un carrousel Instagram pour @afder.recovery sur : "{sujet}"{contrainte_titres}
-
-Réponds avec ce JSON sur UNE SEULE LIGNE :
-{{"accroche":"TITRE SPÉCIFIQUE AU SUJET MAX 5 MOTS MAJUSCULES","slides":[{{"contenu":"fait concret ou mécanisme psychologique réel, tutoiement, max 190 chars"}},{{"contenu":"suite pratique ou insight actionnable, max 190 chars"}}],"cta":"CTA FRANÇAIS MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante française max 80 chars","caption":"accroche + question communauté + 3-5 hashtags, max 190 chars"}}"""
+Le SVG illustre "{sujet}" avec personnages expressifs flat design cartoon."""
 
     for attempt in range(max_retries):
         try:
@@ -164,8 +163,9 @@ Réponds avec ce JSON sur UNE SEULE LIGNE :
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user",   "content": prompt},
                 ],
-                temperature=0.85,
-                max_tokens=1200,
+                temperature=0.6,
+                max_tokens=4000,
+                extra_body={"thinking": {"type": "disabled"}},
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
@@ -185,22 +185,50 @@ def parse_groq_response(raw: str) -> dict:
             c = part.strip().lstrip("json").strip()
             if c.startswith("{"): text = c; break
 
-    s, e = text.find("{"), text.rfind("}")
-    if s == -1 or e == -1:
+    # Qwen3 génère parfois du texte de réflexion avant le JSON
+    # On cherche le DERNIER bloc JSON valide dans la réponse
+    import re as _re
+    json_blocks = list(_re.finditer(r'\{[\s\S]*\}', text))
+    if not json_blocks:
         raise ValueError(f"Pas de JSON : {text[:200]}")
-    text = text[s:e+1]
+    # Prendre le plus grand bloc (le vrai JSON, pas un fragment)
+    text = max((m.group() for m in json_blocks), key=len)
     text = text.replace("\u2019","'").replace("\u2018","'")
     text = text.replace("\u201c",'"').replace("\u201d",'"')
+
+    svg_extracted = ""
+    svg_match = re.search(r'"svg"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
+    if svg_match:
+        svg_raw = svg_match.group(1)
+        svg_extracted = (svg_raw
+            .replace('\\"', '"').replace('\\/', '/')
+            .replace('\\n', '').replace('\\t', ''))
+        text = text[:svg_match.start()] + '"svg":"__SVG__"' + text[svg_match.end():]
 
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        fixed = text.strip()
+        open_braces   = max(0, fixed.count("{") - fixed.count("}"))
+        open_brackets = max(0, fixed.count("[") - fixed.count("]"))
+        fixed += "]" * open_brackets + "}" * open_braces
         try:
-            from json_repair import repair_json
-            data = json.loads(repair_json(text))
-            print("JSON réparé via json-repair")
-        except Exception:
-            raise ValueError(f"JSON invalide : {text[:300]}")
+            data = json.loads(fixed)
+            print("JSON réparé manuellement")
+        except json.JSONDecodeError:
+            import re as _re2
+            data = {}
+            for key in ["accroche","cta","cta_sous","caption"]:
+                m = _re2.search(r'"' + key + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
+                if m: data[key] = m.group(1)
+            slides_raw = _re2.findall(r'"contenu"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
+            if slides_raw:
+                data["slides"] = [{"contenu": s} for s in slides_raw]
+            if not data.get("accroche") or not data.get("slides"):
+                raise ValueError(f"JSON invalide : {text[:300]}")
+            print("JSON extrait par regex")
+    if svg_extracted:
+        data["svg"] = svg_extracted
 
     for key in ["accroche", "slides", "cta", "cta_sous", "caption"]:
         if key not in data:
@@ -208,221 +236,172 @@ def parse_groq_response(raw: str) -> dict:
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
         raise ValueError("'slides' doit avoir au moins 2 éléments")
 
+    # Vérification titre : max 5 mots, alerte si mot anglais
     MOTS_ANGLAIS = {"mental","health","recovery","self","care","love","mind","brain",
                     "body","soul","help","support","heal","feel","life","free","hope",
                     "strong","safe","okay","well","good","bad","you","your","we","our"}
-    TITRES_GENERIQUES = {
-        "tu n'es pas seul", "tu nes pas seul", "la guerison est possible",
-        "la guérison est possible", "nous sommes là", "nous sommes la",
-        "tu peux y arriver", "ensemble on est plus forts", "tu n'es pas seule",
-    }
     accroche = data.get("accroche", "")
     mots = accroche.split()
     if len(mots) > 6:
         print(f"⚠ Titre trop long ({len(mots)} mots) : {accroche!r} → tronqué")
         data["accroche"] = " ".join(mots[:5])
-    mots_en = [m for m in mots if m.lower().strip(".,!?'") in MOTS_ANGLAIS]
+    mots_en = [m for m in mots if m.lower().strip(".,!?") in MOTS_ANGLAIS]
     if mots_en:
         print(f"⚠ Mots anglais détectés dans le titre : {mots_en}")
-    if accroche.lower().strip(".,!?'\"") in TITRES_GENERIQUES:
-        print(f"⚠ Titre générique détecté : {accroche!r} — sera régénéré si possible")
-        data["_titre_generique"] = True
 
     return data
+
+
+def get_valid_svg(data: dict, sujet: str) -> str:
+    svg = data.get("svg", "").strip()
+    if not svg.startswith("<svg"):
+        m = re.search(r'<svg[\s\S]*?</svg>', svg)
+        svg = m.group(0) if m else ""
+    if svg:
+        try:
+            cairosvg.svg2png(bytestring=svg.encode(), output_width=50, output_height=50)
+            print(f"SVG Groq valide ✓ ({len(svg)} chars)")
+            return svg
+        except Exception as ex:
+            print(f"SVG Groq invalide ({ex}) → fallback")
+
+    s = sujet.lower()
+    if any(w in s for w in ["famille","parent","enfant","proche"]):    return SVG_FAMILY
+    if any(w in s for w in ["cerveau","neuro","rechute","science"]):   return SVG_BRAIN
+    if any(w in s for w in ["honte","identité","miroir","estime"]):    return SVG_MIRROR
+    if any(w in s for w in ["arbre","croissance","chemin","rétabli"]): return SVG_TREE
+    return SVG_PEOPLE
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — SVG FALLBACKS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_svg_for_sujet(sujet: str) -> str:
-    s = sujet.lower()
-    if any(w in s for w in ["famille","parent","enfant","proche","silence"]):
-        return SVG_FAMILY
-    if any(w in s for w in ["cerveau","neuro","rechute","science","linéaire","chemin"]):
-        return SVG_BRAIN
-    if any(w in s for w in ["honte","identité","miroir","estime","deuil"]):
-        return SVG_MIRROR
-    if any(w in s for w in ["arbre","croissance","rétabli","soin","signes"]):
-        return SVG_TREE
-    if any(w in s for w in ["codépendance","dépendance","co-dépendance","frontière","épuisant","perdre"]):
-        return SVG_CODEP
-    return SVG_PEOPLE
-
 SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-  <circle cx="155" cy="190" r="52" fill="#FBBF8A"/>
-  <ellipse cx="155" cy="155" rx="40" ry="24" fill="#E8622A"/>
-  <circle cx="130" cy="163" r="17" fill="#E8622A"/>
-  <circle cx="180" cy="163" r="17" fill="#E8622A"/>
-  <rect x="112" y="238" width="86" height="95" rx="30" fill="#3B82F6"/>
-  <rect x="112" y="318" width="30" height="70" rx="15" fill="#3B82F6"/>
-  <rect x="168" y="318" width="30" height="70" rx="15" fill="#3B82F6"/>
-  <circle cx="141" cy="192" r="6" fill="#7C3A1E"/>
-  <circle cx="169" cy="192" r="6" fill="#7C3A1E"/>
-  <path d="M139 208 Q155 220 171 208" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="130" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="180" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <rect x="195" y="265" width="55" height="22" rx="11" fill="#FBBF8A"/>
-  <circle cx="345" cy="190" r="52" fill="#C68642"/>
-  <ellipse cx="345" cy="158" rx="38" ry="22" fill="#6B7280"/>
-  <circle cx="320" cy="165" r="16" fill="#6B7280"/>
-  <circle cx="370" cy="165" r="16" fill="#6B7280"/>
-  <rect x="302" y="238" width="86" height="95" rx="30" fill="#F472B6"/>
-  <rect x="302" y="318" width="30" height="70" rx="15" fill="#F472B6"/>
-  <rect x="358" y="318" width="30" height="70" rx="15" fill="#F472B6"/>
-  <circle cx="331" cy="192" r="6" fill="#4A2008"/>
-  <circle cx="359" cy="192" r="6" fill="#4A2008"/>
-  <path d="M329 208 Q345 220 361 208" stroke="#4A2008" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="320" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.5"/>
-  <ellipse cx="370" cy="204" rx="12" ry="8" fill="#F9A8A8" opacity="0.5"/>
-  <rect x="250" y="265" width="55" height="22" rx="11" fill="#C68642"/>
-  <path d="M250 255 C250 255 234 238 223 247 C212 256 223 272 250 288 C277 272 288 256 277 247 C266 238 250 255 250 255Z" fill="#E85D5D"/>
-  <g transform="translate(418,90)"><path d="M0,-20 L5,-5 L20,0 L5,5 L0,20 L-5,5 L-20,0 L-5,-5 Z" fill="#FCD34D"/></g>
-  <g transform="translate(80,390)"><path d="M0,-13 L3,-3 L13,0 L3,3 L0,13 L-3,3 L-13,0 L-3,-3 Z" fill="#FCD34D"/></g>
-  <g transform="translate(420,360)"><path d="M0,-10 L2.5,-2.5 L10,0 L2.5,2.5 L0,10 L-2.5,2.5 L-10,0 L-2.5,-2.5 Z" fill="#FCD34D"/></g>
+  <circle cx="155" cy="195" r="58" fill="#FBBF8A"/>
+  <ellipse cx="155" cy="158" rx="45" ry="28" fill="#E8622A"/>
+  <circle cx="128" cy="168" r="20" fill="#E8622A"/>
+  <circle cx="182" cy="168" r="20" fill="#E8622A"/>
+  <rect x="110" y="248" width="90" height="100" rx="32" fill="#3B82F6"/>
+  <path d="M200 285 Q255 260 280 275" stroke="#FBBF8A" stroke-width="30" stroke-linecap="round" fill="none"/>
+  <circle cx="140" cy="197" r="7" fill="#7C3A1E"/>
+  <circle cx="170" cy="197" r="7" fill="#7C3A1E"/>
+  <path d="M138 215 Q155 228 172 215" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <ellipse cx="128" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.65"/>
+  <ellipse cx="182" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.65"/>
+  <circle cx="345" cy="195" r="58" fill="#C68642"/>
+  <ellipse cx="345" cy="162" rx="42" ry="25" fill="#6B7280"/>
+  <circle cx="318" cy="170" r="18" fill="#6B7280"/>
+  <circle cx="372" cy="170" r="18" fill="#6B7280"/>
+  <rect x="300" y="248" width="90" height="100" rx="32" fill="#F472B6"/>
+  <path d="M300 285 Q245 260 220 275" stroke="#C68642" stroke-width="30" stroke-linecap="round" fill="none"/>
+  <circle cx="330" cy="197" r="7" fill="#4A2008"/>
+  <circle cx="360" cy="197" r="7" fill="#4A2008"/>
+  <path d="M328 215 Q345 228 362 215" stroke="#4A2008" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <ellipse cx="318" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.55"/>
+  <ellipse cx="372" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.55"/>
+  <ellipse cx="250" cy="278" rx="38" ry="28" fill="#DEB887"/>
+  <path d="M250 155 C250 155 232 137 220 147 C208 157 220 175 250 193 C280 175 292 157 280 147 C268 137 250 155 250 155Z" fill="#E85D5D"/>
+  <g transform="translate(420,88)"><path d="M0,-22 L5.5,-5.5 L22,0 L5.5,5.5 L0,22 L-5.5,5.5 L-22,0 L-5.5,-5.5 Z" fill="#FCD34D"/></g>
+  <g transform="translate(78,388)"><path d="M0,-14 L3.5,-3.5 L14,0 L3.5,3.5 L0,14 L-3.5,3.5 L-14,0 L-3.5,-3.5 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_BRAIN = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="265" r="205" fill="#DDE3ED"/>
-  <ellipse cx="250" cy="210" rx="130" ry="105" fill="#FFB3C6"/>
-  <ellipse cx="185" cy="195" rx="70" ry="85" fill="#FF8FAB"/>
-  <ellipse cx="315" cy="195" rx="70" ry="85" fill="#FF8FAB"/>
-  <line x1="250" y1="115" x2="250" y2="305" stroke="#E8607A" stroke-width="5" stroke-linecap="round"/>
-  <path d="M130 175 Q155 158 178 175 Q155 192 130 175Z" fill="#E8607A" opacity="0.5"/>
-  <path d="M118 220 Q148 200 172 220 Q148 240 118 220Z" fill="#E8607A" opacity="0.5"/>
-  <path d="M128 265 Q158 245 180 265 Q158 285 128 265Z" fill="#E8607A" opacity="0.5"/>
-  <path d="M370 175 Q345 158 322 175 Q345 192 370 175Z" fill="#E8607A" opacity="0.5"/>
-  <path d="M382 220 Q352 200 328 220 Q352 240 382 220Z" fill="#E8607A" opacity="0.5"/>
-  <path d="M372 265 Q342 245 320 265 Q342 285 372 265Z" fill="#E8607A" opacity="0.5"/>
-  <circle cx="250" cy="355" r="55" fill="#FBBF8A"/>
-  <circle cx="232" cy="347" r="7" fill="#7C3A1E"/>
-  <circle cx="268" cy="347" r="7" fill="#7C3A1E"/>
-  <path d="M230 368 Q250 385 270 368" stroke="#7C3A1E" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="220" cy="362" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="280" cy="362" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <polygon points="275,130 258,168 270,168 248,210 272,210 245,255 295,200 272,200 290,165 275,165 292,130" fill="#FCD34D"/>
-  <g transform="translate(95,105)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
-  <g transform="translate(408,108)"><path d="M0,-14 L3.5,-3.5 L14,0 L3.5,3.5 L0,14 L-3.5,3.5 L-14,0 L-3.5,-3.5 Z" fill="#FCD34D"/></g>
+  <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
+  <path d="M250 390 C180 390 115 355 90 300 C65 245 70 180 100 145 C122 118 152 108 170 116 C173 90 188 72 207 68 C223 65 237 74 244 88 C249 72 262 62 276 62Z" fill="#FF8FAB"/>
+  <path d="M250 390 C320 390 385 355 410 300 C435 245 430 180 400 145 C378 118 348 108 330 116 C327 90 312 72 293 68 C277 65 263 74 256 88 C251 72 238 62 224 62Z" fill="#FF8FAB"/>
+  <path d="M250 390 L250 62" stroke="#FF6B8A" stroke-width="5" stroke-linecap="round"/>
+  <path d="M110 195 Q142 175 168 193 Q194 211 178 234" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M96 248 Q130 226 158 246 Q186 266 166 290" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M390 195 Q358 175 332 193 Q306 211 322 234" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M404 248 Q370 226 342 246 Q314 266 334 290" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M112 218 Q250 195 388 218 Q388 250 250 236 Q112 250 112 218Z" fill="#C7D2FE" opacity="0.85"/>
+  <ellipse cx="178" cy="298" rx="22" ry="22" fill="white"/>
+  <circle cx="178" cy="302" r="13" fill="#2D2D2D"/>
+  <circle cx="183" cy="297" r="5" fill="white"/>
+  <ellipse cx="322" cy="298" rx="22" ry="22" fill="white"/>
+  <circle cx="322" cy="302" r="13" fill="#2D2D2D"/>
+  <circle cx="327" cy="297" r="5" fill="white"/>
+  <path d="M205 335 Q250 358 295 335" stroke="#2D2D2D" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <ellipse cx="148" cy="330" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
+  <ellipse cx="352" cy="330" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
+  <g transform="translate(410,95)"><path d="M0,-26 L6.5,-6.5 L26,0 L6.5,6.5 L0,26 L-6.5,6.5 L-26,0 L-6.5,-6.5 Z" fill="#FCD34D"/></g>
+  <g transform="translate(75,400)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="210" fill="#DDE3ED"/>
-  <circle cx="135" cy="168" r="50" fill="#FBBF8A"/>
-  <ellipse cx="135" cy="135" rx="38" ry="22" fill="#E8622A"/>
-  <circle cx="112" cy="142" r="16" fill="#E8622A"/>
-  <circle cx="158" cy="142" r="16" fill="#E8622A"/>
-  <rect x="95" y="214" width="80" height="100" rx="28" fill="#3B82F6"/>
-  <rect x="95" y="300" width="28" height="72" rx="14" fill="#3B82F6"/>
-  <rect x="147" y="300" width="28" height="72" rx="14" fill="#3B82F6"/>
-  <circle cx="122" cy="170" r="6" fill="#7C3A1E"/>
-  <circle cx="148" cy="170" r="6" fill="#7C3A1E"/>
-  <path d="M120 186 Q135 197 150 186" stroke="#7C3A1E" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="112" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="158" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.6"/>
-  <circle cx="365" cy="168" r="50" fill="#C68642"/>
-  <ellipse cx="365" cy="137" rx="36" ry="21" fill="#6B7280"/>
-  <circle cx="342" cy="144" r="15" fill="#6B7280"/>
-  <circle cx="388" cy="144" r="15" fill="#6B7280"/>
-  <rect x="325" y="214" width="80" height="100" rx="28" fill="#F472B6"/>
-  <rect x="325" y="300" width="28" height="72" rx="14" fill="#F472B6"/>
-  <rect x="377" y="300" width="28" height="72" rx="14" fill="#F472B6"/>
-  <circle cx="352" cy="170" r="6" fill="#4A2008"/>
-  <circle cx="378" cy="170" r="6" fill="#4A2008"/>
-  <path d="M350 186 Q365 197 380 186" stroke="#4A2008" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="342" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.5"/>
-  <ellipse cx="388" cy="181" rx="11" ry="7" fill="#F9A8A8" opacity="0.5"/>
-  <circle cx="250" cy="248" r="38" fill="#FBBF8A"/>
-  <ellipse cx="250" cy="222" rx="28" ry="16" fill="#92400E"/>
-  <rect x="220" y="283" width="60" height="80" rx="22" fill="#4ADE80"/>
-  <rect x="220" y="345" width="22" height="55" rx="11" fill="#4ADE80"/>
-  <rect x="258" y="345" width="22" height="55" rx="11" fill="#4ADE80"/>
-  <circle cx="238" cy="250" r="5" fill="#7C3A1E"/>
-  <circle cx="262" cy="250" r="5" fill="#7C3A1E"/>
-  <path d="M236 264 Q250 274 264 264" stroke="#7C3A1E" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <ellipse cx="230" cy="259" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="270" cy="259" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
-  <rect x="172" y="272" width="52" height="18" rx="9" fill="#FBBF8A"/>
-  <rect x="276" y="272" width="52" height="18" rx="9" fill="#C68642"/>
-  <g transform="translate(250,100)"><path d="M0,-22 L5.5,-5.5 L22,0 L5.5,5.5 L0,22 L-5.5,5.5 L-22,0 L-5.5,-5.5 Z" fill="#FCD34D"/></g>
+  <circle cx="130" cy="165" r="55" fill="#FBBF8A"/>
+  <ellipse cx="130" cy="130" rx="42" ry="26" fill="#E8622A"/>
+  <circle cx="105" cy="138" r="18" fill="#E8622A"/>
+  <circle cx="155" cy="138" r="18" fill="#E8622A"/>
+  <rect x="88" y="215" width="84" height="105" rx="30" fill="#3B82F6"/>
+  <rect x="88" y="305" width="34" height="75" rx="17" fill="#3B82F6"/>
+  <rect x="138" y="305" width="34" height="75" rx="17" fill="#3B82F6"/>
+  <circle cx="117" cy="167" r="7" fill="#7C3A1E"/>
+  <circle cx="143" cy="167" r="7" fill="#7C3A1E"/>
+  <path d="M115 183 Q130 195 145 183" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <ellipse cx="106" cy="178" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
+  <ellipse cx="154" cy="178" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
+  <circle cx="370" cy="165" r="55" fill="#C68642"/>
+  <ellipse cx="370" cy="133" rx="40" ry="24" fill="#6B7280"/>
+  <circle cx="345" cy="140" r="17" fill="#6B7280"/>
+  <circle cx="395" cy="140" r="17" fill="#6B7280"/>
+  <rect x="328" y="215" width="84" height="105" rx="30" fill="#F472B6"/>
+  <rect x="328" y="305" width="34" height="75" rx="17" fill="#F472B6"/>
+  <rect x="378" y="305" width="34" height="75" rx="17" fill="#F472B6"/>
+  <circle cx="357" cy="167" r="7" fill="#4A2008"/>
+  <circle cx="383" cy="167" r="7" fill="#4A2008"/>
+  <path d="M355 183 Q370 195 385 183" stroke="#4A2008" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <circle cx="250" cy="245" r="42" fill="#FBBF8A"/>
+  <ellipse cx="250" cy="218" rx="32" ry="18" fill="#92400E"/>
+  <rect x="218" y="283" width="64" height="85" rx="24" fill="#4ADE80"/>
+  <circle cx="240" cy="247" r="5.5" fill="#7C3A1E"/>
+  <circle cx="260" cy="247" r="5.5" fill="#7C3A1E"/>
+  <path d="M238 262 Q250 272 262 262" stroke="#7C3A1E" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <ellipse cx="232" cy="258" rx="10" ry="7" fill="#F9A8A8" opacity="0.6"/>
+  <ellipse cx="268" cy="258" rx="10" ry="7" fill="#F9A8A8" opacity="0.6"/>
+  <path d="M170 270 Q205 285 218 295" stroke="#FBBF8A" stroke-width="22" stroke-linecap="round" fill="none"/>
+  <path d="M330 270 Q295 285 282 295" stroke="#C68642" stroke-width="22" stroke-linecap="round" fill="none"/>
+  <g transform="translate(430,95)"><path d="M0,-20 L5,-5 L20,0 L5,5 L0,20 L-5,5 L-20,0 L-5,-5 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_TREE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="270" r="210" fill="#DDE3ED"/>
-  <rect x="228" y="320" width="44" height="130" rx="18" fill="#A0784A"/>
-  <path d="M228 430 Q195 448 168 458" stroke="#8B6914" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <path d="M250 445 Q250 462 250 475" stroke="#8B6914" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <path d="M272 430 Q305 448 332 458" stroke="#8B6914" stroke-width="8" stroke-linecap="round" fill="none"/>
-  <ellipse cx="250" cy="325" rx="118" ry="88" fill="#7BC47F"/>
-  <ellipse cx="250" cy="268" rx="100" ry="80" fill="#5BAF60"/>
-  <ellipse cx="250" cy="215" rx="80" ry="66" fill="#3D9443"/>
-  <ellipse cx="250" cy="168" rx="58" ry="50" fill="#2D7A35"/>
-  <circle cx="192" cy="278" r="12" fill="#E85D5D"/>
-  <circle cx="308" cy="278" r="12" fill="#E85D5D"/>
-  <circle cx="250" cy="242" r="11" fill="#F7C948"/>
-  <circle cx="210" cy="225" r="10" fill="#E85D5D"/>
-  <circle cx="290" cy="225" r="10" fill="#F7C948"/>
-  <circle cx="250" cy="195" r="9" fill="#E85D5D"/>
-  <ellipse cx="340" cy="190" rx="18" ry="12" fill="#60A5FA"/>
-  <circle cx="354" cy="185" r="9" fill="#60A5FA"/>
-  <circle cx="359" cy="183" r="3" fill="#1E3A5F"/>
-  <polygon points="364,185 372,183 364,187" fill="#F7C948"/>
-  <path d="M322 190 Q330 175 340 182" stroke="#60A5FA" stroke-width="3" fill="none" stroke-linecap="round"/>
-  <g transform="translate(105,130)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
-  <g transform="translate(408,340)"><path d="M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z" fill="#FCD34D"/></g>
+  <path d="M200 415 C200 415 165 440 140 452" stroke="#8B6914" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M200 415 C200 415 200 450 200 465" stroke="#8B6914" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M200 415 C200 415 235 440 260 452" stroke="#8B6914" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <rect x="182" y="295" width="36" height="125" rx="14" fill="#A0784A"/>
+  <ellipse cx="200" cy="302" rx="120" ry="90" fill="#7BC47F"/>
+  <ellipse cx="200" cy="245" rx="100" ry="82" fill="#5BAF60"/>
+  <ellipse cx="200" cy="193" rx="80" ry="68" fill="#3D9443"/>
+  <ellipse cx="200" cy="148" rx="58" ry="52" fill="#2D7A35"/>
+  <circle cx="148" cy="248" r="11" fill="#E85D5D"/>
+  <circle cx="255" cy="255" r="11" fill="#E85D5D"/>
+  <circle cx="200" cy="222" r="10" fill="#F7C948"/>
+  <circle cx="165" cy="198" r="9" fill="#E85D5D"/>
+  <circle cx="238" cy="205" r="9" fill="#F7C948"/>
+  <g transform="translate(390,110)"><path d="M0,-20 L5,-5 L20,0 L5,5 L0,20 L-5,5 L-20,0 L-5,-5 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 SVG_MIRROR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
   <circle cx="250" cy="265" r="210" fill="#DDE3ED"/>
-  <rect x="148" y="65" width="204" height="295" rx="102" fill="#C4A167"/>
-  <rect x="160" y="77" width="180" height="271" rx="92" fill="#EEF6FB"/>
-  <path d="M185 108 C185 108 170 135 174 158" stroke="white" stroke-width="8" stroke-linecap="round" opacity="0.75"/>
-  <rect x="222" y="360" width="56" height="85" rx="28" fill="#C4A167"/>
-  <ellipse cx="250" cy="445" rx="45" ry="12" fill="#B8904A"/>
-  <circle cx="250" cy="178" r="44" fill="#FBBF8A"/>
-  <ellipse cx="250" cy="147" rx="36" ry="21" fill="#E8622A"/>
-  <circle cx="227" cy="155" r="14" fill="#E8622A"/>
-  <circle cx="273" cy="155" r="14" fill="#E8622A"/>
-  <rect x="216" y="218" width="68" height="92" rx="26" fill="#A78BFA"/>
-  <rect x="216" y="295" width="25" height="58" rx="12" fill="#A78BFA"/>
-  <rect x="259" y="295" width="25" height="58" rx="12" fill="#A78BFA"/>
-  <circle cx="237" cy="180" r="6" fill="#7C3A1E"/>
-  <circle cx="263" cy="180" r="6" fill="#7C3A1E"/>
-  <path d="M235 197 Q250 209 265 197" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="226" cy="192" rx="11" ry="7" fill="#F9A8A8" opacity="0.65"/>
-  <ellipse cx="274" cy="192" rx="11" ry="7" fill="#F9A8A8" opacity="0.65"/>
-  <g transform="translate(108,112)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
-  <g transform="translate(392,112)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
-  <g transform="translate(410,350)"><path d="M0,-12 L3,-3 L12,0 L3,3 L0,12 L-3,3 L-12,0 L-3,-3 Z" fill="#FCD34D"/></g>
-</svg>"""
-
-SVG_CODEP = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-  <circle cx="205" cy="250" r="95" fill="#93C5FD" opacity="0.7"/>
-  <circle cx="295" cy="250" r="95" fill="#F9A8D4" opacity="0.7"/>
-  <path d="M250 162 Q298 175 298 250 Q298 325 250 338 Q202 325 202 250 Q202 175 250 162Z" fill="#C4B5FD" opacity="0.85"/>
-  <circle cx="172" cy="215" r="38" fill="#FBBF8A"/>
-  <ellipse cx="172" cy="190" rx="30" ry="17" fill="#3B82F6"/>
-  <circle cx="158" cy="197" r="11" fill="#3B82F6"/>
-  <circle cx="186" cy="197" r="11" fill="#3B82F6"/>
-  <circle cx="161" cy="217" r="5" fill="#7C3A1E"/>
-  <circle cx="183" cy="217" r="5" fill="#7C3A1E"/>
-  <path d="M159 232 Q172 230 185 232" stroke="#7C3A1E" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="152" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="192" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.6"/>
-  <circle cx="328" cy="215" r="38" fill="#C68642"/>
-  <ellipse cx="328" cy="191" rx="28" ry="16" fill="#6B7280"/>
-  <circle cx="314" cy="198" r="10" fill="#6B7280"/>
-  <circle cx="342" cy="198" r="10" fill="#6B7280"/>
-  <circle cx="317" cy="217" r="5" fill="#4A2008"/>
-  <circle cx="339" cy="217" r="5" fill="#4A2008"/>
-  <path d="M315 232 Q328 228 341 232" stroke="#4A2008" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="308" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.5"/>
-  <ellipse cx="348" cy="225" rx="9" ry="6" fill="#F9A8A8" opacity="0.5"/>
-  <circle cx="250" cy="290" r="14" fill="none" stroke="#8B5CF6" stroke-width="5"/>
-  <circle cx="250" cy="320" r="14" fill="none" stroke="#8B5CF6" stroke-width="5"/>
-  <rect x="244" y="300" width="12" height="24" fill="#DDE3ED"/>
-  <g transform="translate(415,92)"><path d="M0,-18 L4.5,-4.5 L18,0 L4.5,4.5 L0,18 L-4.5,4.5 L-18,0 L-4.5,-4.5 Z" fill="#FCD34D"/></g>
-  <g transform="translate(82,400)"><path d="M0,-13 L3,-3 L13,0 L3,3 L0,13 L-3,3 L-13,0 L-3,-3 Z" fill="#FCD34D"/></g>
+  <rect x="148" y="68" width="204" height="294" rx="102" fill="#E8D5B7" stroke="#C4A167" stroke-width="7"/>
+  <rect x="165" y="85" width="170" height="260" rx="88" fill="#EEF6FB"/>
+  <path d="M190 115 C190 115 175 140 178 162" stroke="white" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
+  <rect x="224" y="362" width="52" height="82" rx="26" fill="#C4A167"/>
+  <circle cx="250" cy="180" r="42" fill="#FBBF8A"/>
+  <ellipse cx="250" cy="150" rx="35" ry="20" fill="#E8622A"/>
+  <circle cx="228" cy="157" r="14" fill="#E8622A"/>
+  <circle cx="272" cy="157" r="14" fill="#E8622A"/>
+  <rect x="218" y="218" width="64" height="88" rx="24" fill="#A78BFA"/>
+  <circle cx="238" cy="182" r="6" fill="#7C3A1E"/>
+  <circle cx="262" cy="182" r="6" fill="#7C3A1E"/>
+  <path d="M236 198 Q250 210 264 198" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <ellipse cx="228" cy="194" rx="11" ry="8" fill="#F9A8A8" opacity="0.65"/>
+  <ellipse cx="272" cy="194" rx="11" ry="8" fill="#F9A8A8" opacity="0.65"/>
+  <g transform="translate(108,115)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
+  <g transform="translate(392,115)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
 </svg>"""
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -484,176 +463,141 @@ def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
     return img
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — TOGETHER.AI : IMAGE COVER + FALLBACK PILLOW
+# SECTION 6 — CRÉATION DES SLIDES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-TOGETHER_PROMPTS = {
-    "famille":  "editorial flat design illustration, family bond and support, warm golden tones, soft light, minimal geometric shapes, no text, Instagram carousel cover",
-    "rechute":  "editorial flat design illustration, person walking through a doorway into light, resilience journey, warm amber tones, soft shadows, minimal, no text, Instagram carousel cover",
-    "honte":    "editorial flat design illustration, solitary figure emerging from darkness into warm light, self-compassion, muted warm tones, cinematic mood, no text, Instagram carousel cover",
-    "pair":     "editorial flat design illustration, two figures side by side, solidarity and peer support, soft blue and green tones, calm atmosphere, no text, Instagram carousel cover",
-    "frontiere":"editorial flat design illustration, single calm figure with clear open space around them, boundaries theme, warm neutral tones, minimal, no text, Instagram carousel cover",
-    "codep":    "editorial flat design illustration, two overlapping silhouettes finding balance, codependency theme, soft purple and pink tones, minimal geometric, no text, Instagram carousel cover",
-    "deuil":    "editorial flat design illustration, figure holding a small glowing light in darkness, grief and healing, deep moody tones with warm accent, no text, Instagram carousel cover",
-    "soin":     "editorial flat design illustration, hands nurturing a small plant, self-care theme, soft green and cream tones, gentle light, no text, Instagram carousel cover",
-    "default":  "editorial flat design illustration, single contemplative figure in calm environment, mental health awareness, soft pastel tones, peaceful mood, no text, Instagram carousel cover",
-}
-
-def _get_together_prompt(sujet: str) -> str:
-    s = sujet.lower()
-    if any(w in s for w in ["famille","parent","enfant","proche","silence"]): return TOGETHER_PROMPTS["famille"]
-    if any(w in s for w in ["rechute","linéaire","chemin","neuroscience"]):   return TOGETHER_PROMPTS["rechute"]
-    if any(w in s for w in ["honte","deuil","identité"]):                     return TOGETHER_PROMPTS["honte"]
-    if any(w in s for w in ["pair","aidance","vécu"]):                        return TOGETHER_PROMPTS["pair"]
-    if any(w in s for w in ["frontière","saine","poser"]):                    return TOGETHER_PROMPTS["frontiere"]
-    if any(w in s for w in ["codépendance","co-dépendance","épuisant","perdre"]): return TOGETHER_PROMPTS["codep"]
-    if any(w in s for w in ["soin","signes","prends"]):                       return TOGETHER_PROMPTS["soin"]
-    return TOGETHER_PROMPTS["default"]
-
-def fetch_cover_image(sujet: str) -> Image.Image:
-    """Génère l'image cover via Together.ai FLUX.1-schnell."""
+def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
+    """Génère l'illustration cover via Together.ai FLUX.1-schnell."""
     if not TOGETHER_API_KEY:
         raise ValueError("TOGETHER_API_KEY manquante")
-    prompt = _get_together_prompt(sujet)
-    print("Together.ai : appel FLUX.1-schnell…")
+
+    prompt = (
+        f"Minimal modern editorial illustration, theme: {sujet}. "
+        "Single abstract human figure, neutral posture, subtle sense of struggle "
+        "without dramatization, no facial expression, no smile, no cartoon style. "
+        "Soft muted tones, calm neutral background, clean composition with strong "
+        "negative space for typography overlay. Professional public health style, "
+        "restrained emotional tone, focus on resilience and continuity. "
+        "Soft lighting, simple shapes, hybrid flat-to-soft 3D aesthetic, "
+        "centered subject, no text, no symbols, no exaggerated emotion. "
+        "Instagram carousel cover, prevention and awareness campaign."
+    )
+    print(f"Together.ai : appel API (modèle FLUX.1-schnell)…")
     resp = requests.post(
         "https://api.together.xyz/v1/images/generations",
-        headers={"Authorization": f"Bearer {TOGETHER_API_KEY}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {TOGETHER_API_KEY}",
+            "Content-Type":  "application/json",
+        },
         json={
-            "model":           "black-forest-labs/FLUX.1-schnell",
-            "prompt":          prompt,
-            "width":           1024,
-            "height":          1024,
-            "steps":           4,
-            "n":               1,
+            "model":  "black-forest-labs/FLUX.1-schnell",
+            "prompt": prompt,
+            "width":  1024,
+            "height": 1024,
+            "steps":  4,
+            "n":      1,
             "response_format": "b64_json",
         },
         timeout=90,
     )
     print(f"Together.ai : status {resp.status_code}")
     if resp.status_code != 200:
-        raise RuntimeError(f"Together.ai {resp.status_code} — {resp.text[:300]}")
-    b64 = resp.json()["data"][0]["b64_json"]
+        print(f"Together.ai erreur : {resp.text[:300]}")
+        resp.raise_for_status()
+    data = resp.json()
+    b64 = data["data"][0]["b64_json"]
     img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
-    print(f"Together.ai : image reçue {img.size} ✓")
+    print(f"Together.ai : image reçue {img.size}")
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
-def make_cover_pillow(sujet: str) -> Image.Image:
-    """Fallback : fond dégradé Pillow si Together.ai indisponible."""
-    PALETTES = {
-        "famille":  ((245,235,255),(210,195,240),(139,92,246),(196,181,253)),
-        "rechute":  ((230,245,255),(190,220,245),(37,120,200),(147,197,253)),
-        "honte":    ((255,240,235),(245,210,200),(220,90,60),(252,165,145)),
-        "pair":     ((230,250,240),(190,235,215),(34,150,100),(110,231,183)),
-        "frontiere":((255,248,230),(245,225,185),(202,138,44),(253,211,115)),
-        "codep":    ((235,240,255),(200,215,250),(79,98,210),(165,180,252)),
-        "deuil":    ((245,235,255),(220,205,245),(109,40,217),(196,155,253)),
-        "soin":     ((230,248,245),(190,232,225),(20,150,130),(110,220,200)),
-        "default":  ((235,245,255),(200,220,245),(59,130,246),(147,197,253)),
-    }
-    s = sujet.lower()
-    key = ("famille" if any(w in s for w in ["famille","parent","enfant","proche"]) else
-           "rechute" if any(w in s for w in ["rechute","linéaire","chemin"]) else
-           "honte"   if any(w in s for w in ["honte","deuil","identité"]) else
-           "pair"    if any(w in s for w in ["pair","aidance","vécu"]) else
-           "frontiere" if any(w in s for w in ["frontière","saine","poser"]) else
-           "codep"   if any(w in s for w in ["codépendance","épuisant","perdre"]) else
-           "soin"    if any(w in s for w in ["soin","signes","prends"]) else
-           "default")
-    bg1, bg2, acc, acc2 = PALETTES[key]
-    img = Image.new("RGB", (SIZE, SIZE))
-    dg  = ImageDraw.Draw(img)
-    for y in range(SIZE):
-        t = y/SIZE
-        dg.line([(0,y),(SIZE,y)], fill=(
-            int(bg1[0]+(bg2[0]-bg1[0])*t),
-            int(bg1[1]+(bg2[1]-bg1[1])*t),
-            int(bg1[2]+(bg2[2]-bg1[2])*t),
-        ))
-    d = ImageDraw.Draw(img, "RGBA")
-    d.ellipse([680,-180,1260,400],  fill=(*acc2,80))
-    d.ellipse([-150,700,350,1200],  fill=(*acc,45))
-    d.ellipse([820,350,1020,550],   fill=(*acc,60))
-    d.rectangle([60,520,420,524],   fill=(*acc,180))
-    d.polygon([(160,330),(250,420),(160,510),(70,420)], fill=(*acc2,120))
-    d.ellipse([900,820,960,880],    fill=(*acc,90))
-    print("Cover fallback Pillow générée")
-    return img
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — CRÉATION DES SLIDES
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def make_cover(titre: str, sujet: str, svg: str, total: int) -> str:
+def make_cover(titre: str, sujet: str, total: int) -> str:
     """
-    Slide 1 — cover.
-    Priorité : Together.ai FLUX plein fond + overlay gradient sombre + titre blanc.
-    Fallback  : fond dégradé Pillow + titre sombre.
+    Slide cover :
+      ILLUS  : image Together.ai plein fond (1080x1080)
+      OVERLAY: rectangle semi-transparent en bas pour lisibilité
+      TITRE  : texte blanc bold en bas sur l'overlay
+      NAV    : séparateur + bouton + dots
     """
-    ai_ok = False
-    if TOGETHER_API_KEY:
-        try:
-            bg = fetch_cover_image(sujet)
-            ai_ok = True
-        except Exception as e:
-            print(f"Together.ai indisponible ({e}) → fallback Pillow")
+    # Image générée par IA
+    try:
+        bg_img = fetch_cover_image(titre, sujet)
+        print("Image Together.ai ✓")
+    except Exception as e:
+        print(f"Together.ai indisponible ({e}) → fond dégradé")
+        bg_img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
 
-    if ai_ok:
-        img = bg.copy()
-        overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
-        od = ImageDraw.Draw(overlay)
-        for i in range(520):
-            alpha = int((i/520)**1.5 * 195)
-            od.line([(0, SIZE-520+i),(SIZE, SIZE-520+i)], fill=(0,0,0,alpha))
-        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-        d = ImageDraw.Draw(img)
+    img = bg_img.copy()
+    d   = ImageDraw.Draw(img)
 
-        margin = 55
-        max_w  = SIZE - margin*2
-        f = lines = None
-        for font_size in [100, 86, 72, 60, 50]:
-            f     = F("OpenSans-ExtraBold.ttf", font_size)
-            lines = _wrap(d, titre.upper(), f, max_w)
-            if len(lines) <= 3:
-                break
-        bloc_h = len(lines) * int(f.size * 1.1)
-        y = SIZE - 160 - bloc_h
-        for line in lines:
-            d.text((margin+3, y+3), line, font=f, fill=(0,0,0,160))
-            d.text((margin,   y),   line, font=f, fill=(255,255,255))
-            y += int(f.size * 1.1)
+    # Overlay gradient sombre en bas pour le titre
+    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    od = ImageDraw.Draw(overlay)
+    for i in range(520):
+        alpha = int((i/520)**1.5 * 195)
+        od.line([(0, SIZE-520+i),(SIZE, SIZE-520+i)], fill=(0,0,0,alpha))
+    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    d   = ImageDraw.Draw(img)
 
-    else:
-        img = make_cover_pillow(sujet)
-        overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
-        od = ImageDraw.Draw(overlay)
-        for i in range(380):
-            alpha = int((i/380)**1.2 * 200)
-            od.line([(0, SIZE-380+i),(SIZE, SIZE-380+i)], fill=(255,255,255,alpha))
-        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-        d = ImageDraw.Draw(img)
+    # Titre blanc — police adaptative
+    margin = 55
+    max_w  = SIZE - margin * 2
+    f, lines = None, []
+    for font_size in [100, 86, 72, 60, 50]:
+        f     = F("OpenSans-ExtraBold.ttf", font_size)
+        lines = _wrap(d, titre.upper(), f, max_w)
+        if len(lines) <= 3:
+            break
 
-        margin = 55
-        max_w  = SIZE - margin*2
-        f = lines = None
-        for font_size in [108, 92, 78, 66, 54]:
-            f     = F("OpenSans-ExtraBold.ttf", font_size)
-            lines = _wrap(d, titre.upper(), f, max_w)
-            if len(lines) * int(font_size*1.08) <= 300:
-                break
-        bloc_h = len(lines) * int(f.size*1.08)
-        y = SIZE - 340 + (300 - bloc_h)//2
-        for line in lines:
-            d.text((margin, y), line, font=f, fill=DARK)
-            y += int(f.size*1.08)
+    # Positionner le titre dans la zone overlay (bas de slide)
+    bloc_h = len(lines) * int(f.size * 1.1)
+    y = SIZE - 160 - bloc_h
+    for line in lines:
+        # Ombre légère
+        d.text((margin+3, y+3), line, font=f, fill=(0,0,0,160))
+        d.text((margin,   y),   line, font=f, fill=(255,255,255,255))
+        y += int(f.size * 1.1)
 
-    d = ImageDraw.Draw(img)
+    _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
     _nav_dots(d, total, 0)
-
     path = "/tmp/afder_slide_1.png"
     img.save(path, format="PNG")
-    print(f"Slide 1 sauvegardée → {path}")
+    return path
+    ILLUS_SIZE = 380
+    TITRE_Y1, TITRE_Y2 = 55, 400
+    ILLUS_Y1, ILLUS_Y2 = 415, 950
+
+    img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
+    img = _blob(img, SIZE-30, SIZE//2+60, 340,420, (188,200,215), alpha=65)
+    img = _blob(img, -20,     SIZE-50,   160,160, (190,205,215), alpha=40)
+
+    illus = _svg_to_pil(svg, ILLUS_SIZE)
+    ix = (SIZE - ILLUS_SIZE) // 2
+    iy = ILLUS_Y1 + (ILLUS_Y2 - ILLUS_Y1 - ILLUS_SIZE) // 2
+    img.paste(illus, (ix, iy), illus)
+
+    d = ImageDraw.Draw(img)
+    margin = 55
+    max_w  = SIZE - margin * 2
+    f, lines = None, []
+    for font_size in [108, 92, 78, 66, 54]:
+        f     = F("OpenSans-ExtraBold.ttf", font_size)
+        lines = _wrap(d, titre.upper(), f, max_w)
+        if len(lines) * int(font_size * 1.08) <= (TITRE_Y2 - TITRE_Y1 - 20):
+            break
+
+    bloc_h = len(lines) * int(f.size * 1.08)
+    y = TITRE_Y1 + (TITRE_Y2 - TITRE_Y1 - bloc_h) // 2
+    for line in lines:
+        d.text((margin, y), line, font=f, fill=DARK)
+        y += int(f.size * 1.08)
+
+    _sep(d)
+    _arrow_btn(d, SIZE-100, SIZE-100)
+    _nav_dots(d, total, 0)
+    path = "/tmp/afder_slide_1.png"
+    img.save(path, format="PNG")
     return path
 
 
@@ -746,7 +690,7 @@ def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
     return path
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 8 — PUBLICATION INSTAGRAM
+# SECTION 7 — PUBLICATION INSTAGRAM
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def ig_child(url):
@@ -776,7 +720,7 @@ def ig_publish(cid):
     return r.json()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 9 — MAIN
+# SECTION 8 — MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
 IG_TOKEN = refresh_instagram_token(IG_TOKEN)
@@ -784,33 +728,22 @@ IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 hist, hist_sha = get_historique()
 today    = datetime.date.today().strftime("%Y-%m-%d")
 deja_vus = [h.get("sujet","") for h in hist]
-titres_deja_utilises = [h.get("titre","") for h in hist if h.get("titre")]
 neufs    = [s for s in SUJETS if s not in deja_vus]
-sujet    = random.choice(neufs) if neufs else random.choice(SUJETS)
+sujet    = random.choice(neufs) if neufs else deja_vus[0]
 print(f"Sujet : {sujet}")
 
 client = Groq(api_key=GROQ_API_KEY)
 print("Génération Groq…")
+raw  = generate_with_retry(client, sujet)
+data = parse_groq_response(raw)
+print(f"Titre : {data['accroche']}")
 
-data = None
-for tentative in range(3):
-    raw  = generate_with_retry(client, sujet, titres_deja_utilises)
-    data = parse_groq_response(raw)
-    if not data.get("_titre_generique"):
-        break
-    print(f"Titre générique — nouvelle tentative ({tentative+1}/3)…")
-    time.sleep(5)
-
-print(f"Titre retenu : {data['accroche']}")
-
-svg = get_svg_for_sujet(sujet)
-
-hist.append({"date": today, "sujet": sujet, "titre": data["accroche"]})
+hist.append({"date": today, "sujet": sujet})
 save_historique(hist, hist_sha)
 
 total  = 4
 slides = [
-    make_cover(data["accroche"], sujet, svg, total),
+    make_cover(data["accroche"], sujet, total),
     make_content(data["slides"][0]["contenu"], 2, total),
     make_content(data["slides"][1]["contenu"], 3, total),
     make_cta(data["cta"], data["cta_sous"], total),
