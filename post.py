@@ -19,7 +19,7 @@ IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "qwen/qwen3.6-27b"  # no-thinking via extra_body
+GROQ_MODEL      = "llama3-70b-8192"  # no-thinking via extra_body
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -125,8 +125,7 @@ def refresh_instagram_token(token):
 # SECTION 3 — GROQ : TEXTE + SVG
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """/no_think
-Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
+SYSTEM_PROMPT = """Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
 Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, sans markdown, sans backticks.
 
 LANGUE : Tout le texte doit être en FRANÇAIS CORRECT avec accents (é,è,ê,à,ç).
