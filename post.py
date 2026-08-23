@@ -19,7 +19,7 @@ IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "llama3-70b-8192"  # no-thinking via extra_body
+GROQ_MODEL      = "llama3-70b-8192"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -164,7 +164,6 @@ Le SVG illustre "{sujet}" avec personnages expressifs flat design cartoon."""
                 ],
                 temperature=0.6,
                 max_tokens=4000,
-                extra_body={"thinking": {"type": "disabled"}},
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
