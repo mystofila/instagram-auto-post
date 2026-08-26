@@ -146,34 +146,66 @@ Règles SVG absolues :
 - Étoiles décoratives #FCD34D
 - Minimum 15 éléments SVG"""
 
-def generate_with_retry(client, sujet, max_retries=3):
-    prompt = f"""Crée un carrousel Instagram pour @afder.recovery sur : "{sujet}"
-
-Réponds avec ce JSON sur UNE SEULE LIGNE (le svg sans retours à la ligne) :
-{{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES SANS MOT ANGLAIS","slides":[{{"contenu":"2-3 phrases bienveillantes max 190 chars tutoiement"}},{{"contenu":"Suite concrète max 190 chars"}}],"cta":"CTA FRANÇAIS MAJUSCULES max 28 chars","cta_sous":"phrase bienveillante française max 80 chars","caption":"texte Instagram français 5 hashtags max 190 chars","svg":"<svg xmlns=\\"http://www.w3.org/2000/svg\\" viewBox=\\"0 0 500 500\\">ILLUSTRATION CARTOON COLORÉE</svg>"}}
-
-Le SVG illustre "{sujet}" avec personnages expressifs flat design cartoon."""
-
-    for attempt in range(max_retries):
+def _groq_call(client, system, user, max_tok=1500):
+    """Appel Groq avec retry."""
+    for attempt in range(3):
         try:
             resp = client.chat.completions.create(
                 model=GROQ_MODEL,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": prompt},
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user},
                 ],
                 temperature=0.6,
-                max_tokens=4000,
+                max_tokens=max_tok,
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
             if any(x in str(e).lower() for x in ["rate_limit", "503", "500"]):
                 wait = 15 * (attempt + 1)
-                print(f"Groq rate-limit, retry {wait}s… ({attempt+1}/{max_retries})")
+                print(f"Groq rate-limit, retry {wait}s… ({attempt+1}/3)")
                 time.sleep(wait)
             else:
                 raise
     raise Exception("Groq indisponible après 3 tentatives")
+
+
+def generate_with_retry(client, sujet):
+    """Appel 1 : texte uniquement (JSON court, jamais tronqué)."""
+    system = (
+        "Tu es expert en santé mentale, addiction et pair-aidance. "
+        "Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, "
+        "sans markdown, sans backticks, sans commentaire. "
+        "Tout le texte en FRANÇAIS CORRECT avec accents. "
+        "Zéro mot anglais. Orthographe parfaite."
+    )
+    user = (
+        f'''Carrousel Instagram @afder.recovery sur : "{sujet}"\n\n'''
+        '''JSON sur UNE SEULE LIGNE :\n'''
+        '''{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES",'''
+        '''"slides":[{"contenu":"2-3 phrases bienveillantes max 180 chars tutoiement"},'''
+        '''{"contenu":"Suite concrète max 180 chars"}],'''
+        '''"cta":"PHRASE FORTE MAJUSCULES max 25 chars",'''
+        '''"cta_sous":"phrase bienveillante max 75 chars",'''
+        '''"caption":"texte Instagram 5 hashtags français max 180 chars"}'''
+    )
+    return _groq_call(client, system, user, max_tok=1000)
+
+
+def generate_svg(client, sujet):
+    """Appel 2 : SVG uniquement."""
+    system = (
+        "Tu es illustrateur SVG flat design cartoon. "
+        "Tu réponds UNIQUEMENT avec le code SVG, sans texte avant ni après. "
+        "Règles : viewBox='0 0 500 500', utilise circle/ellipse/rect/path/polygon/g uniquement, "
+        "INTERDIT text/image/use/symbol/defs/filter/script, "
+        "fond obligatoire <circle cx='250' cy='270' r='205' fill='#DDE3ED'/>, "
+        "personnages cartoon avec têtes rondes, yeux, sourires, joues roses #F9A8A8, "
+        "peaux #FBBF8A ou #C68642, vêtements colorés vifs, étoiles #FCD34D, "
+        "minimum 15 éléments."
+    )
+    user = f"Illustration cartoon flat design pour le thème : \"{sujet}\". Commence directement par <svg"
+    return _groq_call(client, system, user, max_tok=2000)
 
 
 def parse_groq_response(raw: str) -> dict:
@@ -183,25 +215,14 @@ def parse_groq_response(raw: str) -> dict:
             c = part.strip().lstrip("json").strip()
             if c.startswith("{"): text = c; break
 
-    # Qwen3 génère parfois du texte de réflexion avant le JSON
-    # On cherche le DERNIER bloc JSON valide dans la réponse
+    # Extraire le plus grand bloc JSON
     import re as _re
     json_blocks = list(_re.finditer(r'\{[\s\S]*\}', text))
     if not json_blocks:
         raise ValueError(f"Pas de JSON : {text[:200]}")
-    # Prendre le plus grand bloc (le vrai JSON, pas un fragment)
     text = max((m.group() for m in json_blocks), key=len)
     text = text.replace("\u2019","'").replace("\u2018","'")
     text = text.replace("\u201c",'"').replace("\u201d",'"')
-
-    svg_extracted = ""
-    svg_match = re.search(r'"svg"\s*:\s*"((?:[^"\\]|\\.)*)"', text, re.DOTALL)
-    if svg_match:
-        svg_raw = svg_match.group(1)
-        svg_extracted = (svg_raw
-            .replace('\\"', '"').replace('\\/', '/')
-            .replace('\\n', '').replace('\\t', ''))
-        text = text[:svg_match.start()] + '"svg":"__SVG__"' + text[svg_match.end():]
 
     try:
         data = json.loads(text)
@@ -217,35 +238,31 @@ def parse_groq_response(raw: str) -> dict:
             import re as _re2
             data = {}
             for key in ["accroche","cta","cta_sous","caption"]:
-                m = _re2.search(r'"' + key + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
+                m = _re2.search(r'"'+ key + r'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', fixed)
                 if m: data[key] = m.group(1)
-            slides_raw = _re2.findall(r'"contenu"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
+            slides_raw = _re2.findall(r'"contenu"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', fixed)
             if slides_raw:
                 data["slides"] = [{"contenu": s} for s in slides_raw]
             if not data.get("accroche") or not data.get("slides"):
                 raise ValueError(f"JSON invalide : {text[:300]}")
             print("JSON extrait par regex")
-    if svg_extracted:
-        data["svg"] = svg_extracted
 
     for key in ["accroche", "slides", "cta", "cta_sous", "caption"]:
         if key not in data:
-            raise ValueError(f"Clé manquante : '{key}'")
+            raise ValueError(f"Clé manquante : \'{key}\'")
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
-        raise ValueError("'slides' doit avoir au moins 2 éléments")
+        raise ValueError("slides doit avoir au moins 2 éléments")
 
-    # Vérification titre : max 5 mots, alerte si mot anglais
-    MOTS_ANGLAIS = {"mental","health","recovery","self","care","love","mind","brain",
-                    "body","soul","help","support","heal","feel","life","free","hope",
-                    "strong","safe","okay","well","good","bad","you","your","we","our"}
-    accroche = data.get("accroche", "")
-    mots = accroche.split()
+    # Vérification titre
+    MOTS_ANGLAIS = {"mental","health","recovery","self","care","mind","body","soul",
+                    "help","support","heal","feel","free","hope","strong","safe","you","we"}
+    mots = data.get("accroche","").split()
     if len(mots) > 6:
-        print(f"⚠ Titre trop long ({len(mots)} mots) : {accroche!r} → tronqué")
+        print(f"⚠ Titre trop long ({len(mots)} mots) → tronqué")
         data["accroche"] = " ".join(mots[:5])
     mots_en = [m for m in mots if m.lower().strip(".,!?") in MOTS_ANGLAIS]
     if mots_en:
-        print(f"⚠ Mots anglais détectés dans le titre : {mots_en}")
+        print(f"⚠ Mots anglais détectés : {mots_en}")
 
     return data
 
@@ -735,6 +752,21 @@ print("Génération Groq…")
 raw  = generate_with_retry(client, sujet)
 data = parse_groq_response(raw)
 print(f"Titre : {data['accroche']}")
+
+# SVG dans un appel séparé (évite troncature JSON)
+print("Génération SVG…")
+try:
+    svg_raw = generate_svg(client, sujet)
+    if "<svg" in svg_raw:
+        svg_raw = svg_raw[svg_raw.find("<svg"):]
+    if "</svg>" in svg_raw:
+        svg_raw = svg_raw[:svg_raw.rfind("</svg>")+6]
+    cairosvg.svg2png(bytestring=svg_raw.encode(), output_width=50, output_height=50)
+    svg = svg_raw
+    print(f"SVG valide ✓ ({len(svg)} chars)")
+except Exception as e:
+    print(f"SVG invalide ({e}) → fallback")
+    svg = get_valid_svg({}, sujet)
 
 hist.append({"date": today, "sujet": sujet})
 save_historique(hist, hist_sha)
