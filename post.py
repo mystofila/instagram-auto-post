@@ -97,6 +97,10 @@ def save_historique(hist, sha):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def refresh_instagram_token(token):
+    # Token Facebook longue durée → pas de refresh automatique
+    # On retourne simplement le token existant
+    print("Token utilisé tel quel (token Facebook longue durée 60j)")
+    return token
     r = requests.get(
         "https://graph.instagram.com/refresh_access_token",
         params={"grant_type": "ig_refresh_token", "access_token": token},
@@ -158,6 +162,7 @@ def _groq_call(client, system, user, max_tok=1500):
                 ],
                 temperature=0.6,
                 max_tokens=max_tok,
+                response_format={"type": "text"},
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
