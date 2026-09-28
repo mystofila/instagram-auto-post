@@ -1,6 +1,6 @@
 """
 AFDER.RECOVERY — Reels Instagram automatique
-Scrape JFT (Just For Today - NA) → adapte en français via DeepSeek
+Scrape JFT (Just For Today - NA, source francophone) → adapte pour Instagram via DeepSeek
 Crée une vidéo 9:16 1080x1920 avec animation machine à écrire
 Publie sur Instagram via Cloudinary + Graph API
 """
@@ -19,7 +19,9 @@ IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
 IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
-JFT_URL         = "https://www.jftna.org/jft/"
+# Nouvelle source : le site anglophone jftna.org n'est plus accessible (404).
+# Cette source francophone fonctionne et évite même l'étape de traduction.
+JFT_URL         = "https://jpa.narcotiquesanonymes.org/"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -78,13 +80,16 @@ def scrape_jft():
     soup = BeautifulSoup(r.text, "html.parser")
     cells = [td.get_text(separator=" ", strip=True) for td in soup.find_all("td")]
     cells = [c for c in cells if c]
-    if len(cells) < 5:
+    if len(cells) < 3:
         raise ValueError(f"Structure JFT inattendue : {len(cells)} cellules")
-    titre = cells[1]
-    jft   = next((c for c in reversed(cells) if c.lower().startswith("just for today")), cells[-1])
-    print(f"JFT titre : {titre}")
-    print(f"JFT pensée : {jft}")
-    return {"titre": titre, "jft": jft}
+
+    # Structure du site jpa.narcotiquesanonymes.org :
+    #   cells[0] = la citation courte (celle qu'on veut)
+    #   cells[1] = le texte long de développement
+    #   cells[2] = la conclusion longue
+    citation = cells[0]
+    print(f"Citation JFT : {citation}")
+    return {"titre": citation, "jft": citation}
 
 # ── Génération citation DeepSeek ───────────────────────────────────────────────
 
@@ -96,16 +101,15 @@ def generate_quote():
     )
     prompt = (
         "Tu es un créateur de contenu Instagram bienveillant spécialisé en addiction et rétablissement.\n"
-        "Voici la pensée du jour en anglais :\n\n"
-        f"TITRE : {jft['titre']}\n"
+        "Voici la pensée du jour (source francophone NA) :\n\n"
         f"PENSÉE : {jft['jft']}\n\n"
-        "Ta mission : traduire et adapter cette pensée en français pour Instagram Reels.\n\n"
+        "Ta mission : reformuler cette pensée pour un Reel Instagram, de façon concise et inspirante.\n\n"
         "RÈGLES OBLIGATOIRES :\n"
         "1. Commence TOUJOURS par 'Juste pour aujourd'hui :'\n"
         "2. Maximum 15 mots après les deux points\n"
         "3. Phrase COMPLÈTE avec point final\n"
-        "4. Remplace NA / Narcotics Anonymous par 'notre communauté'\n"
-        "5. Remplace Dieu / God / Higher Power / spiritual par 'la force du collectif' ou 'l'entraide'\n"
+        "4. Remplace NA / Narcotiques Anonymes par 'notre communauté'\n"
+        "5. Remplace Dieu / Puissance Supérieure / spirituel par 'la force du collectif' ou 'l'entraide'\n"
         "6. Style : chaleureux, direct, inspirant\n"
         "7. Si tu veux un saut de ligne utilise | (pipe)\n"
         "8. Réponds UNIQUEMENT avec la phrase, rien d'autre"
