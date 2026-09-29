@@ -78,16 +78,18 @@ def scrape_jft():
     r = requests.get(JFT_URL, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
-    cells = [td.get_text(separator=" ", strip=True) for td in soup.find_all("td")]
-    cells = [c for c in cells if c]
-    if len(cells) < 3:
-        raise ValueError(f"Structure JFT inattendue : {len(cells)} cellules")
 
-    # Structure du site jpa.narcotiquesanonymes.org :
-    #   cells[0] = la citation courte (celle qu'on veut)
-    #   cells[1] = le texte long de développement
-    #   cells[2] = la conclusion longue
-    citation = cells[0]
+    # Le site jpa.narcotiquesanonymes.org n'utilise pas de tableau : la phrase
+    # courte du jour ("Juste pour aujourd'hui, je veux...") est le titre
+    # <h2 class="spip"> à la fin du bloc <div class="texte">.
+    h2 = soup.select_one("div.texte h2.spip") or soup.find("h2", class_="spip")
+    if not h2:
+        raise ValueError("Citation introuvable : balise h2.spip absente de la page")
+
+    citation = h2.get_text(separator=" ", strip=True)
+    if not citation:
+        raise ValueError("Citation vide après extraction du h2.spip")
+
     print(f"Citation JFT : {citation}")
     return {"titre": citation, "jft": citation}
 
