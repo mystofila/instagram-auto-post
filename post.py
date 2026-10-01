@@ -1,7 +1,7 @@
 """
 AFDER.RECOVERY — Carrousel Instagram automatique
-Groq  : génère texte + SVG illustration cartoon
-Layout: zones strictes — titre adaptatif, rien ne déborde
+Groq  : génère texte + SVG illustration cartoon (un seul appel)
+Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déborde
 Slides: 1080x1080px PNG — Open Sans ExtraBold
 """
 
@@ -48,21 +48,48 @@ SIZE       = 1080
 
 # ── Sujets ─────────────────────────────────────────────────────────────────────
 SUJETS = [
+    # Codépendance & relations
     "La co-dépendance, c'est quoi ?",
-    "Rechute et échec : ce que disent les neurosciences",
-    "La honte en addiction : comment s'en libérer",
-    "Pair-aidance : pourquoi l'expérience vécue change tout",
-    "Frontières saines : c'est quoi et comment les poser",
-    "Santé mentale et addiction : le lien invisible",
-    "Famille et addiction : briser le silence",
-    "Le rétablissement n'est pas linéaire — et c'est normal",
-    "Les signes que tu prends soin de toi malgré tout",
     "Codépendance : quand aider devient épuisant",
-    "Vivre avec quelqu'un en addiction : les émotions qu'on tait",
-    "Le deuil de la personne qu'on était avant l'addiction",
-    "Soutenir sans se perdre : trouver l'équilibre",
-    "Les rechutes font partie du chemin",
-    "Pair-aidant : un rôle qui part du vécu",
+    "Aimer quelqu'un en addiction sans se perdre",
+    "Comment poser des limites bienveillantes",
+    "Quand l'amour devient contrôle : reconnaître la codépendance",
+    # Rechute & rétablissement
+    "Rechute : ce n'est pas un échec, c'est une information",
+    "Le rétablissement n'est pas une ligne droite",
+    "Après une rechute : comment se relever sans se juger",
+    "Les petites victoires qui comptent dans le rétablissement",
+    "Rétablissement : pourquoi comparer son chemin est dangereux",
+    # Émotions & santé mentale
+    "La honte en addiction : comment s'en libérer",
+    "Colère, tristesse, peur : les émotions cachées de l'addiction",
+    "Santé mentale et addiction : le lien qu'on n'explique pas",
+    "Comment gérer l'anxiété sans substance",
+    "Apprendre à se faire confiance à nouveau",
+    # Pair-aidance
+    "Pair-aidance : la force de l'expérience vécue",
+    "Pair-aidant : ce que ça change d'être compris par quelqu'un qui a vécu",
+    "Comment soutenir sans donner de conseils",
+    "L'écoute active : l'outil le plus puissant du pair-aidant",
+    "Pair-aidance : prendre soin de soi pour prendre soin des autres",
+    # Famille & entourage
+    "Famille et addiction : briser le silence",
+    "Ce que vivent les proches : les émotions qu'on tait",
+    "Comment parler de l'addiction à ses enfants",
+    "Pardon et réconciliation : est-ce toujours possible ?",
+    "L'entourage aussi a besoin de soutien",
+    # Identité & reconstruction
+    "Le deuil de la personne qu'on était avant",
+    "Qui suis-je sans ma dépendance ?",
+    "Reconstruire l'estime de soi après l'addiction",
+    "Trouver un sens à son histoire de vie",
+    "Les forces cachées dans ton parcours de rétablissement",
+    # Pratique & quotidien
+    "Les signes que tu prends soin de toi malgré tout",
+    "Routine et rétablissement : pourquoi la structure aide",
+    "Sommeil, alimentation, mouvement : les bases du rétablissement",
+    "Comment gérer les triggers au quotidien",
+    "Célébrer ses progrès : un acte révolutionnaire",
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -93,22 +120,66 @@ def save_historique(hist, sha):
     print(f"Historique sauvegardé : {r.status_code}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — TOKEN INSTAGRAM
+# SECTION 2 — REFRESH TOKEN INSTAGRAM
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def refresh_instagram_token(token):
-    # Token Instagram (IGAA...) généré depuis le dashboard Meta, valable 60 jours.
-    # Pas de renouvellement automatique : à régénérer avant expiration.
-    print("Token Instagram utilisé tel quel (valable 60 jours)")
+    # Token Facebook longue durée → pas de refresh automatique
+    # On retourne simplement le token existant
+    print("Token utilisé tel quel (token Facebook longue durée 60j)")
     return token
+    r = requests.get(
+        "https://graph.instagram.com/refresh_access_token",
+        params={"grant_type": "ig_refresh_token", "access_token": token},
+    )
+    data = r.json()
+    if "access_token" not in data:
+        print(f"Token non rafraîchi : {data}")
+        return token
+    new_token = data["access_token"]
+    print("Token Instagram rafraîchi ✓")
+    pub = requests.get(
+        f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
+        headers={"Authorization": f"token {GH_TOKEN}"},
+    ).json()
+    from nacl import encoding, public as nacl_pub
+    pk  = nacl_pub.PublicKey(pub["key"].encode(), encoding.Base64Encoder())
+    enc = base64.b64encode(nacl_pub.SealedBox(pk).encrypt(new_token.encode())).decode()
+    requests.put(
+        f"https://api.github.com/repos/{REPO}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
+        headers={"Authorization": f"token {GH_TOKEN}"},
+        json={"encrypted_value": enc, "key_id": pub["key_id"]},
+    )
+    return new_token
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — GROQ : TEXTE + SVG
 # ═══════════════════════════════════════════════════════════════════════════════
 
+SYSTEM_PROMPT = """Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
+Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, sans markdown, sans backticks.
+
+LANGUE : Tout le texte doit être en FRANÇAIS CORRECT avec accents (é,è,ê,à,ç).
+Zéro mot anglais. Orthographe et grammaire parfaites.
+
+TITRE (accroche) : maximum 5 MOTS en français, majuscules, percutant.
+Exemples valides : "LA HONTE N'EST PAS UNE FATALITÉ", "TU N'ES PAS SEUL"
+Exemples INTERDITS : tout mot anglais comme MENTAL, HEALTH, RECOVERY, SELF, CARE.
+
+Règles SVG absolues :
+- Commence par : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+- Termine par : </svg>
+- Utilise UNIQUEMENT : circle, ellipse, rect, path, line, polygon, g
+- INTERDIT : text, image, use, symbol, defs, filter, style, script
+- Fond obligatoire : <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
+- Personnages cartoon : têtes rondes, yeux ronds noirs, sourires, joues roses
+- Couleurs peaux #FBBF8A ou #C68642, vêtements colorés vifs
+- Étoiles décoratives #FCD34D
+- Minimum 15 éléments SVG"""
+
 def _groq_call(client, system, user, max_tok=1500):
-    """Appel Groq avec retry (relance aussi si la réponse est vide)."""
-    for attempt in range(4):
+    """Appel Groq avec retry."""
+    for attempt in range(3):
         try:
             resp = client.chat.completions.create(
                 model=GROQ_MODEL,
@@ -117,28 +188,22 @@ def _groq_call(client, system, user, max_tok=1500):
                     {"role": "user",   "content": user},
                 ],
                 temperature=0.6,
-                # Le modèle "réfléchit" avant de répondre : cette réflexion
-                # consomme des tokens, donc on prévoit de la marge.
-                max_tokens=max_tok * 3,
-                extra_body={"reasoning_effort": "low"},
+                max_tokens=max_tok,
+                response_format={"type": "text"},
             )
-            content = (resp.choices[0].message.content or "").strip()
-            if content:
-                return content
-            print(f"Groq : réponse vide, retry… ({attempt+1}/4)")
-            time.sleep(5)
+            return resp.choices[0].message.content.strip()
         except Exception as e:
             if any(x in str(e).lower() for x in ["rate_limit", "503", "500"]):
                 wait = 15 * (attempt + 1)
-                print(f"Groq rate-limit, retry {wait}s… ({attempt+1}/4)")
+                print(f"Groq rate-limit, retry {wait}s… ({attempt+1}/3)")
                 time.sleep(wait)
             else:
                 raise
-    raise Exception("Groq indisponible ou réponse vide après 4 tentatives")
+    raise Exception("Groq indisponible après 3 tentatives")
 
 
 def generate_with_retry(client, sujet):
-    """Appel 1 : texte uniquement (JSON court)."""
+    """Appel 1 : texte uniquement (JSON court, jamais tronqué)."""
     system = (
         "Tu es expert en santé mentale, addiction et pair-aidance. "
         "Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, "
@@ -176,21 +241,20 @@ def generate_svg(client, sujet):
 
 
 def parse_groq_response(raw: str) -> dict:
-    text = (raw or "").strip()
+    text = raw.strip()
     if "```" in text:
         for part in text.split("```")[1:]:
             c = part.strip().lstrip("json").strip()
-            if c.startswith("{"):
-                text = c
-                break
+            if c.startswith("{"): text = c; break
 
     # Extraire le plus grand bloc JSON
-    json_blocks = list(re.finditer(r'\{[\s\S]*\}', text))
+    import re as _re
+    json_blocks = list(_re.finditer(r'\{[\s\S]*\}', text))
     if not json_blocks:
         raise ValueError(f"Pas de JSON : {text[:200]}")
     text = max((m.group() for m in json_blocks), key=len)
-    text = text.replace("\u2019", "'").replace("\u2018", "'")
-    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("\u2019","'").replace("\u2018","'")
+    text = text.replace("\u201c",'"').replace("\u201d",'"')
 
     try:
         data = json.loads(text)
@@ -203,12 +267,12 @@ def parse_groq_response(raw: str) -> dict:
             data = json.loads(fixed)
             print("JSON réparé manuellement")
         except json.JSONDecodeError:
+            import re as _re2
             data = {}
-            for key in ["accroche", "cta", "cta_sous", "caption"]:
-                m = re.search(r'"' + key + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
-                if m:
-                    data[key] = m.group(1)
-            slides_raw = re.findall(r'"contenu"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
+            for key in ["accroche","cta","cta_sous","caption"]:
+                m = _re2.search(r'"'+ key + r'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', fixed)
+                if m: data[key] = m.group(1)
+            slides_raw = _re2.findall(r'"contenu"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', fixed)
             if slides_raw:
                 data["slides"] = [{"contenu": s} for s in slides_raw]
             if not data.get("accroche") or not data.get("slides"):
@@ -217,14 +281,14 @@ def parse_groq_response(raw: str) -> dict:
 
     for key in ["accroche", "slides", "cta", "cta_sous", "caption"]:
         if key not in data:
-            raise ValueError(f"Clé manquante : '{key}'")
+            raise ValueError(f"Clé manquante : \'{key}\'")
     if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
         raise ValueError("slides doit avoir au moins 2 éléments")
 
     # Vérification titre
-    MOTS_ANGLAIS = {"mental", "health", "recovery", "self", "care", "mind", "body", "soul",
-                    "help", "support", "heal", "feel", "free", "hope", "strong", "safe", "you", "we"}
-    mots = data.get("accroche", "").split()
+    MOTS_ANGLAIS = {"mental","health","recovery","self","care","mind","body","soul",
+                    "help","support","heal","feel","free","hope","strong","safe","you","we"}
+    mots = data.get("accroche","").split()
     if len(mots) > 6:
         print(f"⚠ Titre trop long ({len(mots)} mots) → tronqué")
         data["accroche"] = " ".join(mots[:5])
@@ -249,10 +313,10 @@ def get_valid_svg(data: dict, sujet: str) -> str:
             print(f"SVG Groq invalide ({ex}) → fallback")
 
     s = sujet.lower()
-    if any(w in s for w in ["famille", "parent", "enfant", "proche"]):    return SVG_FAMILY
-    if any(w in s for w in ["cerveau", "neuro", "rechute", "science"]):   return SVG_BRAIN
-    if any(w in s for w in ["honte", "identité", "miroir", "estime"]):    return SVG_MIRROR
-    if any(w in s for w in ["arbre", "croissance", "chemin", "rétabli"]): return SVG_TREE
+    if any(w in s for w in ["famille","parent","enfant","proche"]):    return SVG_FAMILY
+    if any(w in s for w in ["cerveau","neuro","rechute","science"]):   return SVG_BRAIN
+    if any(w in s for w in ["honte","identité","miroir","estime"]):    return SVG_MIRROR
+    if any(w in s for w in ["arbre","croissance","chemin","rétabli"]): return SVG_TREE
     return SVG_PEOPLE
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -391,9 +455,9 @@ SVG_MIRROR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
 # SECTION 5 — UTILITAIRES DESSIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _blob(img, cx, cy, rx, ry, color=(195, 205, 215), alpha=55):
-    ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(ov).ellipse([cx-rx, cy-ry, cx+rx, cy+ry], fill=(*color, alpha))
+def _blob(img, cx, cy, rx, ry, color=(195,205,215), alpha=55):
+    ov = Image.new("RGBA", img.size, (0,0,0,0))
+    ImageDraw.Draw(ov).ellipse([cx-rx,cy-ry,cx+rx,cy+ry], fill=(*color,alpha))
     base = img.convert("RGBA"); base.paste(ov, mask=ov)
     return base.convert("RGB")
 
@@ -401,8 +465,7 @@ def _wrap(draw, text, font, max_w):
     words, lines, cur = text.split(), [], ""
     for w in words:
         t = f"{cur} {w}".strip()
-        if draw.textbbox((0, 0), t, font=font)[2] <= max_w:
-            cur = t
+        if draw.textbbox((0,0), t, font=font)[2] <= max_w: cur = t
         else:
             if cur: lines.append(cur)
             cur = w
@@ -410,28 +473,28 @@ def _wrap(draw, text, font, max_w):
     return lines
 
 def _arrow_btn(draw, cx, cy, r=56):
-    draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=RED)
-    draw.line([(cx-15, cy), (cx+13, cy)], fill=WHITE, width=5)
-    draw.polygon([(cx+5, cy-10), (cx+21, cy), (cx+5, cy+10)], fill=WHITE)
+    draw.ellipse([cx-r,cy-r,cx+r,cy+r], fill=RED)
+    draw.line([(cx-15,cy),(cx+13,cy)], fill=WHITE, width=5)
+    draw.polygon([(cx+5,cy-10),(cx+21,cy),(cx+5,cy+10)], fill=WHITE)
 
 def _prev_btn(draw, cy):
-    draw.ellipse([18, cy-44, 82, cy+44], fill=(222, 223, 228))
-    draw.polygon([(58, cy-16), (40, cy), (58, cy+16)], fill=(145, 145, 155))
+    draw.ellipse([18,cy-44,82,cy+44], fill=(222,223,228))
+    draw.polygon([(58,cy-16),(40,cy),(58,cy+16)], fill=(145,145,155))
 
 def _nav_dots(draw, total, active):
-    gap = 20; sx = (SIZE-(total-1)*gap)//2; cy = SIZE-30
+    gap=20; sx=(SIZE-(total-1)*gap)//2; cy=SIZE-30
     for i in range(total):
         x = sx+i*gap
-        if i == active: draw.ellipse([x-5, cy-5, x+5, cy+5], fill=DARK)
-        else:           draw.ellipse([x-4, cy-4, x+4, cy+4], fill=RULE)
+        if i==active: draw.ellipse([x-5,cy-5,x+5,cy+5], fill=DARK)
+        else:         draw.ellipse([x-4,cy-4,x+4,cy+4], fill=RULE)
 
 def _sep(draw, y=SIZE-102):
-    draw.line([(55, y), (SIZE-192, y)], fill=RULE, width=2)
+    draw.line([(55,y),(SIZE-192,y)], fill=RULE, width=2)
 
 def _heart_shape(draw, cx, cy, sz, color):
     pts = []
     for i in range(360):
-        a = math.radians(i); sc = sz/100
+        a=math.radians(i); sc=sz/100
         pts.append((cx+int(sz*(16*math.sin(a)**3)*sc*0.56),
                     cy-int(sz*(13*math.cos(a)-5*math.cos(2*a)-2*math.cos(3*a)-math.cos(4*a))*sc*0.56)))
     draw.polygon(pts, fill=color)
@@ -466,7 +529,7 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
         "centered subject, no text, no symbols, no exaggerated emotion. "
         "Instagram carousel cover, prevention and awareness campaign."
     )
-    print("Together.ai : appel API (modèle FLUX.1-schnell)…")
+    print(f"Together.ai : appel API (modèle FLUX.1-schnell)…")
     resp = requests.post(
         "https://api.together.xyz/v1/images/generations",
         headers={
@@ -499,44 +562,79 @@ def make_cover(titre: str, sujet: str, total: int) -> str:
     """
     Slide cover :
       ILLUS  : image Together.ai plein fond (1080x1080)
-      OVERLAY: dégradé sombre en bas pour la lisibilité
-      TITRE  : texte blanc bold en bas
+      OVERLAY: rectangle semi-transparent en bas pour lisibilité
+      TITRE  : texte blanc bold en bas sur l'overlay
       NAV    : séparateur + bouton + dots
     """
+    # Image générée par IA
     try:
         bg_img = fetch_cover_image(titre, sujet)
         print("Image Together.ai ✓")
     except Exception as e:
-        print(f"Together.ai indisponible ({e}) → fond uni")
+        print(f"Together.ai indisponible ({e}) → fond dégradé")
         bg_img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
 
     img = bg_img.copy()
 
-    # Overlay gradient sombre en bas pour le titre
-    overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+    # Overlay dégradé HAUT → transparent (titre lisible en haut)
+    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
     od = ImageDraw.Draw(overlay)
-    for i in range(520):
-        alpha = int((i/520)**1.5 * 195)
-        od.line([(0, SIZE-520+i), (SIZE, SIZE-520+i)], fill=(0, 0, 0, alpha))
+    for i in range(600):
+        alpha = int((1 - i/600)**1.4 * 210)
+        od.line([(0, i),(SIZE, i)], fill=(0,0,0,alpha))
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     d   = ImageDraw.Draw(img)
 
-    # Titre blanc — police adaptative
+    # Titre blanc EN HAUT — police adaptative
     margin = 55
     max_w  = SIZE - margin * 2
     f, lines = None, []
-    for font_size in [100, 86, 72, 60, 50]:
+    for font_size in [108, 92, 78, 66, 54]:
         f     = F("OpenSans-ExtraBold.ttf", font_size)
         lines = _wrap(d, titre.upper(), f, max_w)
-        if len(lines) <= 3:
+        if len(lines) * int(font_size * 1.1) <= 420:
             break
 
-    bloc_h = len(lines) * int(f.size * 1.1)
-    y = SIZE - 160 - bloc_h
+    y = 70
     for line in lines:
-        d.text((margin+3, y+3), line, font=f, fill=(0, 0, 0))
-        d.text((margin,   y),   line, font=f, fill=(255, 255, 255))
+        d.text((margin+3, y+3), line, font=f, fill=(0,0,0,140))
+        d.text((margin,   y),   line, font=f, fill=(255,255,255,255))
         y += int(f.size * 1.1)
+
+    _sep(d)
+    _arrow_btn(d, SIZE-100, SIZE-100)
+    _nav_dots(d, total, 0)
+    path = "/tmp/afder_slide_1.png"
+    img.save(path, format="PNG")
+    return path
+    ILLUS_SIZE = 380
+    TITRE_Y1, TITRE_Y2 = 55, 400
+    ILLUS_Y1, ILLUS_Y2 = 415, 950
+
+    img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
+    img = _blob(img, SIZE-30, SIZE//2+60, 340,420, (188,200,215), alpha=65)
+    img = _blob(img, -20,     SIZE-50,   160,160, (190,205,215), alpha=40)
+
+    illus = _svg_to_pil(svg, ILLUS_SIZE)
+    ix = (SIZE - ILLUS_SIZE) // 2
+    iy = ILLUS_Y1 + (ILLUS_Y2 - ILLUS_Y1 - ILLUS_SIZE) // 2
+    img.paste(illus, (ix, iy), illus)
+
+    d = ImageDraw.Draw(img)
+    margin = 55
+    max_w  = SIZE - margin * 2
+    f, lines = None, []
+    for font_size in [108, 92, 78, 66, 54]:
+        f     = F("OpenSans-ExtraBold.ttf", font_size)
+        lines = _wrap(d, titre.upper(), f, max_w)
+        if len(lines) * int(font_size * 1.08) <= (TITRE_Y2 - TITRE_Y1 - 20):
+            break
+
+    bloc_h = len(lines) * int(f.size * 1.08)
+    y = TITRE_Y1 + (TITRE_Y2 - TITRE_Y1 - bloc_h) // 2
+    for line in lines:
+        d.text((margin, y), line, font=f, fill=DARK)
+        y += int(f.size * 1.08)
 
     _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
@@ -548,14 +646,14 @@ def make_cover(titre: str, sujet: str, total: int) -> str:
 
 def make_content(texte: str, slide_idx: int, total: int) -> str:
     img = Image.new("RGB", (SIZE, SIZE), BG_CONTENT)
-    img = _blob(img, SIZE-40, SIZE//2+200, 280, 320, (188, 200, 215), alpha=40)
+    img = _blob(img, SIZE-40, SIZE//2+200, 280,320, (188,200,215), alpha=40)
 
     d = ImageDraw.Draw(img)
     f_reg  = F("OpenSans-Regular.ttf", 66)
     f_bold = F("OpenSans-Bold.ttf",    66)
     margin = 72; max_w = SIZE-margin*2
     lh = int(f_reg.size*1.50)
-    sp = d.textbbox((0, 0), " ", font=f_reg)[2]
+    sp = d.textbbox((0,0)," ",font=f_reg)[2]
 
     tokens = re.split(r'(\*\*[^*]+\*\*)', texte)
     wf = []
@@ -567,23 +665,22 @@ def make_content(texte: str, slide_idx: int, total: int) -> str:
 
     lines_wf, cur_l, cur_w = [], [], 0
     for word, font in wf:
-        ww = d.textbbox((0, 0), word, font=font)[2]
+        ww = d.textbbox((0,0),word,font=font)[2]
         need = ww+(sp if cur_l else 0)
-        if cur_w+need <= max_w:
-            cur_l.append((word, font)); cur_w += need
+        if cur_w+need<=max_w: cur_l.append((word,font)); cur_w+=need
         else:
             if cur_l: lines_wf.append(cur_l)
-            cur_l, cur_w = [(word, font)], ww
+            cur_l,cur_w=[(word,font)],ww
     if cur_l: lines_wf.append(cur_l)
 
     total_h = len(lines_wf)*lh
     y = 90 + (SIZE-148-90-total_h)//2
     for wfline in lines_wf:
-        lx = margin
-        for word, font in wfline:
-            d.text((lx, y), word, font=font, fill=TEXT_CLR)
-            lx += d.textbbox((0, 0), word, font=font)[2]+sp
-        y += lh
+        lx=margin
+        for word,font in wfline:
+            d.text((lx,y),word,font=font,fill=TEXT_CLR)
+            lx+=d.textbbox((0,0),word,font=font)[2]+sp
+        y+=lh
 
     _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
@@ -596,43 +693,43 @@ def make_content(texte: str, slide_idx: int, total: int) -> str:
 
 def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
     img = Image.new("RGB", (SIZE, SIZE), BG_CONTENT)
-    img = _blob(img, SIZE//2, SIZE-60, 440, 220, (188, 200, 215), alpha=62)
-    img = _blob(img, 45, 175, 155, 155, (188, 200, 215), alpha=40)
+    img = _blob(img, SIZE//2, SIZE-60, 440,220, (188,200,215), alpha=62)
+    img = _blob(img, 45, 175, 155,155, (188,200,215), alpha=40)
 
     d = ImageDraw.Draw(img)
     hcy = 138
-    d.ellipse([SIZE//2-60, hcy-60, SIZE//2+60, hcy+60], fill=RED)
+    d.ellipse([SIZE//2-60,hcy-60,SIZE//2+60,hcy+60], fill=RED)
     _heart_shape(d, SIZE//2, hcy, 44, WHITE)
-    d.line([(62, hcy-76), (SIZE//2-88, hcy-76)], fill=RULE, width=2)
-    d.line([(SIZE//2+88, hcy-76), (SIZE-62, hcy-76)], fill=RULE, width=2)
+    d.line([(62,hcy-76),(SIZE//2-88,hcy-76)], fill=RULE, width=2)
+    d.line([(SIZE//2+88,hcy-76),(SIZE-62,hcy-76)], fill=RULE, width=2)
 
     f_cta = F("OpenSans-ExtraBold.ttf", 106)
     lines = _wrap(d, cta_titre, f_cta, SIZE-130)
-    if len(lines) > 2:
-        f_cta = F("OpenSans-ExtraBold.ttf", 88)
-        lines = _wrap(d, cta_titre, f_cta, SIZE-130)
-    y = 255
+    if len(lines)>2:
+        f_cta=F("OpenSans-ExtraBold.ttf",88)
+        lines=_wrap(d,cta_titre,f_cta,SIZE-130)
+    y=255
     for line in lines:
-        bb = d.textbbox((0, 0), line, font=f_cta)
-        d.text(((SIZE-(bb[2]-bb[0]))//2, y), line, font=f_cta, fill=DARK)
-        y += int(f_cta.size*1.08)
+        bb=d.textbbox((0,0),line,font=f_cta)
+        d.text(((SIZE-(bb[2]-bb[0]))//2,y),line,font=f_cta,fill=DARK)
+        y+=int(f_cta.size*1.08)
 
-    y += 34
-    f_sub = F("OpenSans-Regular.ttf", 50)
-    for line in _wrap(d, cta_sous, f_sub, SIZE-175):
-        bb = d.textbbox((0, 0), line, font=f_sub)
-        d.text(((SIZE-(bb[2]-bb[0]))//2, y), line, font=f_sub, fill=MID_GREY)
-        y += int(f_sub.size*1.48)
+    y+=34
+    f_sub=F("OpenSans-Regular.ttf",50)
+    for line in _wrap(d,cta_sous,f_sub,SIZE-175):
+        bb=d.textbbox((0,0),line,font=f_sub)
+        d.text(((SIZE-(bb[2]-bb[0]))//2,y),line,font=f_sub,fill=MID_GREY)
+        y+=int(f_sub.size*1.48)
 
-    f_h = F("OpenSans-Semibold.ttf", 46)
-    handle = "@AFDER.RECOVERY"
-    bb = d.textbbox((0, 0), handle, font=f_h)
-    d.text(((SIZE-(bb[2]-bb[0]))//2, SIZE-130), handle, font=f_h, fill=DARK)
-    _sep(d, SIZE-172)
-    _prev_btn(d, SIZE//2)
-    _nav_dots(d, total, total-1)
-    path = f"/tmp/afder_slide_{total}.png"
-    img.save(path, format="PNG")
+    f_h=F("OpenSans-Semibold.ttf",46)
+    handle="@AFDER.RECOVERY"
+    bb=d.textbbox((0,0),handle,font=f_h)
+    d.text(((SIZE-(bb[2]-bb[0]))//2,SIZE-130),handle,font=f_h,fill=DARK)
+    _sep(d,SIZE-172)
+    _prev_btn(d,SIZE//2)
+    _nav_dots(d,total,total-1)
+    path=f"/tmp/afder_slide_{total}.png"
+    img.save(path,format="PNG")
     return path
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -642,7 +739,7 @@ def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
 def ig_child(url):
     r = requests.post(
         f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
-        data={"image_url": url, "is_carousel_item": "true", "access_token": IG_TOKEN},
+        data={"image_url":url,"is_carousel_item":"true","access_token":IG_TOKEN},
     )
     resp = r.json()
     if "id" not in resp: raise Exception(f"Child failed: {resp}")
@@ -651,8 +748,8 @@ def ig_child(url):
 def ig_carousel(ids, caption):
     r = requests.post(
         f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
-        data={"media_type": "CAROUSEL", "children": ",".join(ids),
-              "caption": caption, "access_token": IG_TOKEN},
+        data={"media_type":"CAROUSEL","children":",".join(ids),
+              "caption":caption,"access_token":IG_TOKEN},
     )
     resp = r.json()
     if "id" not in resp: raise Exception(f"Carousel failed: {resp}")
@@ -661,7 +758,7 @@ def ig_carousel(ids, caption):
 def ig_publish(cid):
     r = requests.post(
         f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media_publish",
-        data={"creation_id": cid, "access_token": IG_TOKEN},
+        data={"creation_id":cid,"access_token":IG_TOKEN},
     )
     return r.json()
 
@@ -673,7 +770,7 @@ IG_TOKEN = refresh_instagram_token(IG_TOKEN)
 
 hist, hist_sha = get_historique()
 today    = datetime.date.today().strftime("%Y-%m-%d")
-deja_vus = [h.get("sujet", "") for h in hist]
+deja_vus = [h.get("sujet","") for h in hist]
 neufs    = [s for s in SUJETS if s not in deja_vus]
 sujet    = random.choice(neufs) if neufs else deja_vus[0]
 print(f"Sujet : {sujet}")
@@ -684,8 +781,7 @@ raw  = generate_with_retry(client, sujet)
 data = parse_groq_response(raw)
 print(f"Titre : {data['accroche']}")
 
-# SVG dans un appel séparé (évite troncature JSON) — utilisé en secours,
-# la cover utilise l'image Together.ai
+# SVG dans un appel séparé (évite troncature JSON)
 print("Génération SVG…")
 try:
     svg_raw = generate_svg(client, sujet)
