@@ -1,25 +1,26 @@
 """
 AFDER.RECOVERY — Carrousel Instagram automatique
-Groq  : génère texte + SVG illustration cartoon (un seul appel)
-Layout: zones strictes — illustration 380px max, titre adaptatif, rien ne déborde
-Slides: 1080x1080px PNG — Open Sans ExtraBold
+Groq      : génère le texte (JSON)
+Together  : génère l'image de couverture (FLUX.1-schnell)
+Slides    : 1080x1080px PNG — Open Sans
 """
 
-import os, re, json, math, time, random, base64, datetime, requests, io
+import os, re, json, math, time, random, base64, datetime, io
+import requests
 from PIL import Image, ImageDraw, ImageFont
-import cairosvg
 import cloudinary, cloudinary.uploader
 from groq import Groq
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 GROQ_API_KEY     = os.environ["GROQ_API_KEY"]
 TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
-IG_TOKEN        = os.environ["INSTAGRAM_ACCESS_TOKEN"]
-IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
-GH_TOKEN        = os.environ["GH_TOKEN"]
-REPO            = "mystofila/instagram-auto-post"
-HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "openai/gpt-oss-120b"
+IG_TOKEN         = os.environ["INSTAGRAM_ACCESS_TOKEN"]
+IG_USER_ID       = os.environ["INSTAGRAM_USER_ID"]
+GH_TOKEN         = os.environ["GH_TOKEN"]
+REPO             = "mystofila/instagram-auto-post"
+HISTORIQUE_FILE  = "historique_afder.json"
+GROQ_MODEL       = "openai/gpt-oss-120b"
+IG_API           = "https://graph.instagram.com/v19.0"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -32,8 +33,10 @@ _OSD = "/usr/share/fonts/truetype/open-sans/"
 _FB  = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 def F(name, size):
-    try:    return ImageFont.truetype(_OSD + name, size)
-    except: return ImageFont.truetype(_FB, size)
+    try:
+        return ImageFont.truetype(_OSD + name, size)
+    except Exception:
+        return ImageFont.truetype(_FB, size)
 
 # ── Couleurs ───────────────────────────────────────────────────────────────────
 WHITE      = (255, 255, 255)
@@ -100,11 +103,14 @@ def get_historique():
     r = requests.get(
         f"https://api.github.com/repos/{REPO}/contents/{HISTORIQUE_FILE}",
         headers={"Authorization": f"token {GH_TOKEN}"},
+        timeout=30,
     )
     if r.status_code == 404:
         return [], None
+    r.raise_for_status()
     data = r.json()
     return json.loads(base64.b64decode(data["content"]).decode()), data["sha"]
+
 
 def save_historique(hist, sha):
     encoded = base64.b64encode(
@@ -115,71 +121,25 @@ def save_historique(hist, sha):
         payload["sha"] = sha
     r = requests.put(
         f"https://api.github.com/repos/{REPO}/contents/{HISTORIQUE_FILE}",
-        headers={"Authorization": f"token {GH_TOKEN}"}, json=payload,
+        headers={"Authorization": f"token {GH_TOKEN}"},
+        json=payload,
+        timeout=30,
     )
     print(f"Historique sauvegardé : {r.status_code}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — REFRESH TOKEN INSTAGRAM
+# SECTION 2 — GROQ : TEXTE
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def refresh_instagram_token(token):
-    # Token Facebook longue durée → pas de refresh automatique
-    # On retourne simplement le token existant
-    print("Token utilisé tel quel (token Facebook longue durée 60j)")
-    return token
-    r = requests.get(
-        "https://graph.instagram.com/refresh_access_token",
-        params={"grant_type": "ig_refresh_token", "access_token": token},
-    )
-    data = r.json()
-    if "access_token" not in data:
-        print(f"Token non rafraîchi : {data}")
-        return token
-    new_token = data["access_token"]
-    print("Token Instagram rafraîchi ✓")
-    pub = requests.get(
-        f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
-        headers={"Authorization": f"token {GH_TOKEN}"},
-    ).json()
-    from nacl import encoding, public as nacl_pub
-    pk  = nacl_pub.PublicKey(pub["key"].encode(), encoding.Base64Encoder())
-    enc = base64.b64encode(nacl_pub.SealedBox(pk).encrypt(new_token.encode())).decode()
-    requests.put(
-        f"https://api.github.com/repos/{REPO}/actions/secrets/INSTAGRAM_ACCESS_TOKEN",
-        headers={"Authorization": f"token {GH_TOKEN}"},
-        json={"encrypted_value": enc, "key_id": pub["key_id"]},
-    )
-    return new_token
+def _groq_call(client, system, user, max_tok=1000):
+    """
+    Appel Groq avec retry.
+    gpt-oss-120b est un modèle de raisonnement : une partie des tokens part dans
+    la « réflexion ». On ajoute donc une marge et on réessaie si la réponse est vide.
+    """
+    extra = {"reasoning_effort": "low", "include_reasoning": False}
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — GROQ : TEXTE + SVG
-# ═══════════════════════════════════════════════════════════════════════════════
-
-SYSTEM_PROMPT = """Tu es expert en santé mentale, addiction, pair-aidance ET illustrateur SVG.
-Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, sans markdown, sans backticks.
-
-LANGUE : Tout le texte doit être en FRANÇAIS CORRECT avec accents (é,è,ê,à,ç).
-Zéro mot anglais. Orthographe et grammaire parfaites.
-
-TITRE (accroche) : maximum 5 MOTS en français, majuscules, percutant.
-Exemples valides : "LA HONTE N'EST PAS UNE FATALITÉ", "TU N'ES PAS SEUL"
-Exemples INTERDITS : tout mot anglais comme MENTAL, HEALTH, RECOVERY, SELF, CARE.
-
-Règles SVG absolues :
-- Commence par : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-- Termine par : </svg>
-- Utilise UNIQUEMENT : circle, ellipse, rect, path, line, polygon, g
-- INTERDIT : text, image, use, symbol, defs, filter, style, script
-- Fond obligatoire : <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-- Personnages cartoon : têtes rondes, yeux ronds noirs, sourires, joues roses
-- Couleurs peaux #FBBF8A ou #C68642, vêtements colorés vifs
-- Étoiles décoratives #FCD34D
-- Minimum 15 éléments SVG"""
-
-def _groq_call(client, system, user, max_tok=1500):
-    """Appel Groq avec retry."""
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             resp = client.chat.completions.create(
                 model=GROQ_MODEL,
@@ -188,22 +148,35 @@ def _groq_call(client, system, user, max_tok=1500):
                     {"role": "user",   "content": user},
                 ],
                 temperature=0.6,
-                max_tokens=max_tok,
-                response_format={"type": "text"},
+                max_tokens=max_tok + 3000,
+                **extra,
             )
-            return resp.choices[0].message.content.strip()
+            choice  = resp.choices[0]
+            content = (choice.message.content or "").strip()
+            if not content:
+                raise ValueError(f"réponse vide (finish_reason={choice.finish_reason})")
+            return content
+
         except Exception as e:
-            if any(x in str(e).lower() for x in ["rate_limit", "503", "500"]):
-                wait = 15 * (attempt + 1)
-                print(f"Groq rate-limit, retry {wait}s… ({attempt+1}/3)")
+            msg = str(e).lower()
+
+            # SDK / modèle qui refuse les paramètres de raisonnement → on les retire
+            if extra and ("reasoning" in msg or "unexpected keyword" in msg):
+                print(f"Paramètres de raisonnement refusés ({e}) → retry sans")
+                extra = {}
+                continue
+
+            if any(x in msg for x in ["rate_limit", "rate limit", "503", "500", "vide", "timeout"]):
+                wait = 10 * (attempt + 1)
+                print(f"Groq problème ({e}), retry dans {wait}s… ({attempt+1}/4)")
                 time.sleep(wait)
             else:
                 raise
-    raise Exception("Groq indisponible après 3 tentatives")
+
+    raise Exception("Groq indisponible après plusieurs tentatives")
 
 
-def generate_with_retry(client, sujet):
-    """Appel 1 : texte uniquement (JSON court, jamais tronqué)."""
+def generate_text(client, sujet):
     system = (
         "Tu es expert en santé mentale, addiction et pair-aidance. "
         "Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, "
@@ -212,49 +185,42 @@ def generate_with_retry(client, sujet):
         "Zéro mot anglais. Orthographe parfaite."
     )
     user = (
-        f'''Carrousel Instagram @afder.recovery sur : "{sujet}"\n\n'''
-        '''JSON sur UNE SEULE LIGNE :\n'''
-        '''{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES",'''
-        '''"slides":[{"contenu":"2-3 phrases bienveillantes max 180 chars tutoiement"},'''
-        '''{"contenu":"Suite concrète max 180 chars"}],'''
-        '''"cta":"PHRASE FORTE MAJUSCULES max 25 chars",'''
-        '''"cta_sous":"phrase bienveillante max 75 chars",'''
-        '''"caption":"texte Instagram 5 hashtags français max 180 chars"}'''
+        f'Carrousel Instagram @afder.recovery sur : "{sujet}"\n\n'
+        'JSON sur UNE SEULE LIGNE :\n'
+        '{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES",'
+        '"slides":[{"contenu":"2-3 phrases bienveillantes max 180 chars tutoiement"},'
+        '{"contenu":"Suite concrète max 180 chars"}],'
+        '"cta":"PHRASE FORTE MAJUSCULES max 25 chars",'
+        '"cta_sous":"phrase bienveillante max 75 chars",'
+        '"caption":"texte Instagram 5 hashtags français max 180 chars"}'
     )
     return _groq_call(client, system, user, max_tok=1000)
 
 
-def generate_svg(client, sujet):
-    """Appel 2 : SVG uniquement."""
-    system = (
-        "Tu es illustrateur SVG flat design cartoon. "
-        "Tu réponds UNIQUEMENT avec le code SVG, sans texte avant ni après. "
-        "Règles : viewBox='0 0 500 500', utilise circle/ellipse/rect/path/polygon/g uniquement, "
-        "INTERDIT text/image/use/symbol/defs/filter/script, "
-        "fond obligatoire <circle cx='250' cy='270' r='205' fill='#DDE3ED'/>, "
-        "personnages cartoon avec têtes rondes, yeux, sourires, joues roses #F9A8A8, "
-        "peaux #FBBF8A ou #C68642, vêtements colorés vifs, étoiles #FCD34D, "
-        "minimum 15 éléments."
-    )
-    user = f"Illustration cartoon flat design pour le thème : \"{sujet}\". Commence directement par <svg"
-    return _groq_call(client, system, user, max_tok=2000)
-
-
 def parse_groq_response(raw: str) -> dict:
-    text = raw.strip()
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("Réponse Groq vide")
+
+    # Retire les éventuels blocs markdown
     if "```" in text:
         for part in text.split("```")[1:]:
-            c = part.strip().lstrip("json").strip()
-            if c.startswith("{"): text = c; break
+            c = part.strip()
+            if c.lower().startswith("json"):
+                c = c[4:].strip()
+            if c.startswith("{"):
+                text = c
+                break
 
-    # Extraire le plus grand bloc JSON
-    import re as _re
-    json_blocks = list(_re.finditer(r'\{[\s\S]*\}', text))
-    if not json_blocks:
+    # Extrait le plus grand bloc JSON
+    blocks = list(re.finditer(r'\{[\s\S]*\}', text))
+    if not blocks:
         raise ValueError(f"Pas de JSON : {text[:200]}")
-    text = max((m.group() for m in json_blocks), key=len)
-    text = text.replace("\u2019","'").replace("\u2018","'")
-    text = text.replace("\u201c",'"').replace("\u201d",'"')
+    text = max((m.group() for m in blocks), key=len)
+
+    # Guillemets typographiques → droits
+    text = text.replace("\u2019", "'").replace("\u2018", "'")
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
 
     try:
         data = json.loads(text)
@@ -267,12 +233,12 @@ def parse_groq_response(raw: str) -> dict:
             data = json.loads(fixed)
             print("JSON réparé manuellement")
         except json.JSONDecodeError:
-            import re as _re2
             data = {}
-            for key in ["accroche","cta","cta_sous","caption"]:
-                m = _re2.search(r'"'+ key + r'"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', fixed)
-                if m: data[key] = m.group(1)
-            slides_raw = _re2.findall(r'"contenu"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', fixed)
+            for key in ["accroche", "cta", "cta_sous", "caption"]:
+                m = re.search(r'"' + key + r'"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
+                if m:
+                    data[key] = m.group(1)
+            slides_raw = re.findall(r'"contenu"\s*:\s*"((?:[^"\\]|\\.)*)"', fixed)
             if slides_raw:
                 data["slides"] = [{"contenu": s} for s in slides_raw]
             if not data.get("accroche") or not data.get("slides"):
@@ -281,14 +247,18 @@ def parse_groq_response(raw: str) -> dict:
 
     for key in ["accroche", "slides", "cta", "cta_sous", "caption"]:
         if key not in data:
-            raise ValueError(f"Clé manquante : \'{key}\'")
-    if not isinstance(data.get("slides"), list) or len(data["slides"]) < 2:
+            raise ValueError(f"Clé manquante : '{key}'")
+    if not isinstance(data["slides"], list) or len(data["slides"]) < 2:
         raise ValueError("slides doit avoir au moins 2 éléments")
+    for s in data["slides"][:2]:
+        if not isinstance(s, dict) or not s.get("contenu"):
+            raise ValueError("Slide sans 'contenu'")
 
-    # Vérification titre
-    MOTS_ANGLAIS = {"mental","health","recovery","self","care","mind","body","soul",
-                    "help","support","heal","feel","free","hope","strong","safe","you","we"}
-    mots = data.get("accroche","").split()
+    # Vérification du titre
+    MOTS_ANGLAIS = {"mental", "health", "recovery", "self", "care", "mind", "body",
+                    "soul", "help", "support", "heal", "feel", "free", "hope",
+                    "strong", "safe", "you", "we"}
+    mots = data["accroche"].split()
     if len(mots) > 6:
         print(f"⚠ Titre trop long ({len(mots)} mots) → tronqué")
         data["accroche"] = " ".join(mots[:5])
@@ -298,223 +268,77 @@ def parse_groq_response(raw: str) -> dict:
 
     return data
 
-
-def get_valid_svg(data: dict, sujet: str) -> str:
-    svg = data.get("svg", "").strip()
-    if not svg.startswith("<svg"):
-        m = re.search(r'<svg[\s\S]*?</svg>', svg)
-        svg = m.group(0) if m else ""
-    if svg:
-        try:
-            cairosvg.svg2png(bytestring=svg.encode(), output_width=50, output_height=50)
-            print(f"SVG Groq valide ✓ ({len(svg)} chars)")
-            return svg
-        except Exception as ex:
-            print(f"SVG Groq invalide ({ex}) → fallback")
-
-    s = sujet.lower()
-    if any(w in s for w in ["famille","parent","enfant","proche"]):    return SVG_FAMILY
-    if any(w in s for w in ["cerveau","neuro","rechute","science"]):   return SVG_BRAIN
-    if any(w in s for w in ["honte","identité","miroir","estime"]):    return SVG_MIRROR
-    if any(w in s for w in ["arbre","croissance","chemin","rétabli"]): return SVG_TREE
-    return SVG_PEOPLE
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — SVG FALLBACKS
+# SECTION 3 — UTILITAIRES DESSIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SVG_PEOPLE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-  <circle cx="155" cy="195" r="58" fill="#FBBF8A"/>
-  <ellipse cx="155" cy="158" rx="45" ry="28" fill="#E8622A"/>
-  <circle cx="128" cy="168" r="20" fill="#E8622A"/>
-  <circle cx="182" cy="168" r="20" fill="#E8622A"/>
-  <rect x="110" y="248" width="90" height="100" rx="32" fill="#3B82F6"/>
-  <path d="M200 285 Q255 260 280 275" stroke="#FBBF8A" stroke-width="30" stroke-linecap="round" fill="none"/>
-  <circle cx="140" cy="197" r="7" fill="#7C3A1E"/>
-  <circle cx="170" cy="197" r="7" fill="#7C3A1E"/>
-  <path d="M138 215 Q155 228 172 215" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="128" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.65"/>
-  <ellipse cx="182" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.65"/>
-  <circle cx="345" cy="195" r="58" fill="#C68642"/>
-  <ellipse cx="345" cy="162" rx="42" ry="25" fill="#6B7280"/>
-  <circle cx="318" cy="170" r="18" fill="#6B7280"/>
-  <circle cx="372" cy="170" r="18" fill="#6B7280"/>
-  <rect x="300" y="248" width="90" height="100" rx="32" fill="#F472B6"/>
-  <path d="M300 285 Q245 260 220 275" stroke="#C68642" stroke-width="30" stroke-linecap="round" fill="none"/>
-  <circle cx="330" cy="197" r="7" fill="#4A2008"/>
-  <circle cx="360" cy="197" r="7" fill="#4A2008"/>
-  <path d="M328 215 Q345 228 362 215" stroke="#4A2008" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="318" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.55"/>
-  <ellipse cx="372" cy="210" rx="13" ry="9" fill="#F9A8A8" opacity="0.55"/>
-  <ellipse cx="250" cy="278" rx="38" ry="28" fill="#DEB887"/>
-  <path d="M250 155 C250 155 232 137 220 147 C208 157 220 175 250 193 C280 175 292 157 280 147 C268 137 250 155 250 155Z" fill="#E85D5D"/>
-  <g transform="translate(420,88)"><path d="M0,-22 L5.5,-5.5 L22,0 L5.5,5.5 L0,22 L-5.5,5.5 L-22,0 L-5.5,-5.5 Z" fill="#FCD34D"/></g>
-  <g transform="translate(78,388)"><path d="M0,-14 L3.5,-3.5 L14,0 L3.5,3.5 L0,14 L-3.5,3.5 L-14,0 L-3.5,-3.5 Z" fill="#FCD34D"/></g>
-</svg>"""
-
-SVG_BRAIN = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="270" r="205" fill="#DDE3ED"/>
-  <path d="M250 390 C180 390 115 355 90 300 C65 245 70 180 100 145 C122 118 152 108 170 116 C173 90 188 72 207 68 C223 65 237 74 244 88 C249 72 262 62 276 62Z" fill="#FF8FAB"/>
-  <path d="M250 390 C320 390 385 355 410 300 C435 245 430 180 400 145 C378 118 348 108 330 116 C327 90 312 72 293 68 C277 65 263 74 256 88 C251 72 238 62 224 62Z" fill="#FF8FAB"/>
-  <path d="M250 390 L250 62" stroke="#FF6B8A" stroke-width="5" stroke-linecap="round"/>
-  <path d="M110 195 Q142 175 168 193 Q194 211 178 234" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
-  <path d="M96 248 Q130 226 158 246 Q186 266 166 290" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
-  <path d="M390 195 Q358 175 332 193 Q306 211 322 234" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
-  <path d="M404 248 Q370 226 342 246 Q314 266 334 290" fill="none" stroke="#FF6B8A" stroke-width="4" stroke-linecap="round"/>
-  <path d="M112 218 Q250 195 388 218 Q388 250 250 236 Q112 250 112 218Z" fill="#C7D2FE" opacity="0.85"/>
-  <ellipse cx="178" cy="298" rx="22" ry="22" fill="white"/>
-  <circle cx="178" cy="302" r="13" fill="#2D2D2D"/>
-  <circle cx="183" cy="297" r="5" fill="white"/>
-  <ellipse cx="322" cy="298" rx="22" ry="22" fill="white"/>
-  <circle cx="322" cy="302" r="13" fill="#2D2D2D"/>
-  <circle cx="327" cy="297" r="5" fill="white"/>
-  <path d="M205 335 Q250 358 295 335" stroke="#2D2D2D" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="148" cy="330" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
-  <ellipse cx="352" cy="330" rx="28" ry="17" fill="#FF8FAB" opacity="0.5"/>
-  <g transform="translate(410,95)"><path d="M0,-26 L6.5,-6.5 L26,0 L6.5,6.5 L0,26 L-6.5,6.5 L-26,0 L-6.5,-6.5 Z" fill="#FCD34D"/></g>
-  <g transform="translate(75,400)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
-</svg>"""
-
-SVG_FAMILY = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="270" r="210" fill="#DDE3ED"/>
-  <circle cx="130" cy="165" r="55" fill="#FBBF8A"/>
-  <ellipse cx="130" cy="130" rx="42" ry="26" fill="#E8622A"/>
-  <circle cx="105" cy="138" r="18" fill="#E8622A"/>
-  <circle cx="155" cy="138" r="18" fill="#E8622A"/>
-  <rect x="88" y="215" width="84" height="105" rx="30" fill="#3B82F6"/>
-  <rect x="88" y="305" width="34" height="75" rx="17" fill="#3B82F6"/>
-  <rect x="138" y="305" width="34" height="75" rx="17" fill="#3B82F6"/>
-  <circle cx="117" cy="167" r="7" fill="#7C3A1E"/>
-  <circle cx="143" cy="167" r="7" fill="#7C3A1E"/>
-  <path d="M115 183 Q130 195 145 183" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="106" cy="178" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="154" cy="178" rx="12" ry="8" fill="#F9A8A8" opacity="0.6"/>
-  <circle cx="370" cy="165" r="55" fill="#C68642"/>
-  <ellipse cx="370" cy="133" rx="40" ry="24" fill="#6B7280"/>
-  <circle cx="345" cy="140" r="17" fill="#6B7280"/>
-  <circle cx="395" cy="140" r="17" fill="#6B7280"/>
-  <rect x="328" y="215" width="84" height="105" rx="30" fill="#F472B6"/>
-  <rect x="328" y="305" width="34" height="75" rx="17" fill="#F472B6"/>
-  <rect x="378" y="305" width="34" height="75" rx="17" fill="#F472B6"/>
-  <circle cx="357" cy="167" r="7" fill="#4A2008"/>
-  <circle cx="383" cy="167" r="7" fill="#4A2008"/>
-  <path d="M355 183 Q370 195 385 183" stroke="#4A2008" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <circle cx="250" cy="245" r="42" fill="#FBBF8A"/>
-  <ellipse cx="250" cy="218" rx="32" ry="18" fill="#92400E"/>
-  <rect x="218" y="283" width="64" height="85" rx="24" fill="#4ADE80"/>
-  <circle cx="240" cy="247" r="5.5" fill="#7C3A1E"/>
-  <circle cx="260" cy="247" r="5.5" fill="#7C3A1E"/>
-  <path d="M238 262 Q250 272 262 262" stroke="#7C3A1E" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-  <ellipse cx="232" cy="258" rx="10" ry="7" fill="#F9A8A8" opacity="0.6"/>
-  <ellipse cx="268" cy="258" rx="10" ry="7" fill="#F9A8A8" opacity="0.6"/>
-  <path d="M170 270 Q205 285 218 295" stroke="#FBBF8A" stroke-width="22" stroke-linecap="round" fill="none"/>
-  <path d="M330 270 Q295 285 282 295" stroke="#C68642" stroke-width="22" stroke-linecap="round" fill="none"/>
-  <g transform="translate(430,95)"><path d="M0,-20 L5,-5 L20,0 L5,5 L0,20 L-5,5 L-20,0 L-5,-5 Z" fill="#FCD34D"/></g>
-</svg>"""
-
-SVG_TREE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="270" r="210" fill="#DDE3ED"/>
-  <path d="M200 415 C200 415 165 440 140 452" stroke="#8B6914" stroke-width="7" stroke-linecap="round" fill="none"/>
-  <path d="M200 415 C200 415 200 450 200 465" stroke="#8B6914" stroke-width="7" stroke-linecap="round" fill="none"/>
-  <path d="M200 415 C200 415 235 440 260 452" stroke="#8B6914" stroke-width="7" stroke-linecap="round" fill="none"/>
-  <rect x="182" y="295" width="36" height="125" rx="14" fill="#A0784A"/>
-  <ellipse cx="200" cy="302" rx="120" ry="90" fill="#7BC47F"/>
-  <ellipse cx="200" cy="245" rx="100" ry="82" fill="#5BAF60"/>
-  <ellipse cx="200" cy="193" rx="80" ry="68" fill="#3D9443"/>
-  <ellipse cx="200" cy="148" rx="58" ry="52" fill="#2D7A35"/>
-  <circle cx="148" cy="248" r="11" fill="#E85D5D"/>
-  <circle cx="255" cy="255" r="11" fill="#E85D5D"/>
-  <circle cx="200" cy="222" r="10" fill="#F7C948"/>
-  <circle cx="165" cy="198" r="9" fill="#E85D5D"/>
-  <circle cx="238" cy="205" r="9" fill="#F7C948"/>
-  <g transform="translate(390,110)"><path d="M0,-20 L5,-5 L20,0 L5,5 L0,20 L-5,5 L-20,0 L-5,-5 Z" fill="#FCD34D"/></g>
-</svg>"""
-
-SVG_MIRROR = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
-  <circle cx="250" cy="265" r="210" fill="#DDE3ED"/>
-  <rect x="148" y="68" width="204" height="294" rx="102" fill="#E8D5B7" stroke="#C4A167" stroke-width="7"/>
-  <rect x="165" y="85" width="170" height="260" rx="88" fill="#EEF6FB"/>
-  <path d="M190 115 C190 115 175 140 178 162" stroke="white" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
-  <rect x="224" y="362" width="52" height="82" rx="26" fill="#C4A167"/>
-  <circle cx="250" cy="180" r="42" fill="#FBBF8A"/>
-  <ellipse cx="250" cy="150" rx="35" ry="20" fill="#E8622A"/>
-  <circle cx="228" cy="157" r="14" fill="#E8622A"/>
-  <circle cx="272" cy="157" r="14" fill="#E8622A"/>
-  <rect x="218" y="218" width="64" height="88" rx="24" fill="#A78BFA"/>
-  <circle cx="238" cy="182" r="6" fill="#7C3A1E"/>
-  <circle cx="262" cy="182" r="6" fill="#7C3A1E"/>
-  <path d="M236 198 Q250 210 264 198" stroke="#7C3A1E" stroke-width="4" fill="none" stroke-linecap="round"/>
-  <ellipse cx="228" cy="194" rx="11" ry="8" fill="#F9A8A8" opacity="0.65"/>
-  <ellipse cx="272" cy="194" rx="11" ry="8" fill="#F9A8A8" opacity="0.65"/>
-  <g transform="translate(108,115)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
-  <g transform="translate(392,115)"><path d="M0,-16 L4,-4 L16,0 L4,4 L0,16 L-4,4 L-16,0 L-4,-4 Z" fill="#FCD34D"/></g>
-</svg>"""
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — UTILITAIRES DESSIN
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _blob(img, cx, cy, rx, ry, color=(195,205,215), alpha=55):
-    ov = Image.new("RGBA", img.size, (0,0,0,0))
-    ImageDraw.Draw(ov).ellipse([cx-rx,cy-ry,cx+rx,cy+ry], fill=(*color,alpha))
-    base = img.convert("RGBA"); base.paste(ov, mask=ov)
+def _blob(img, cx, cy, rx, ry, color=(195, 205, 215), alpha=55):
+    ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(ov).ellipse([cx-rx, cy-ry, cx+rx, cy+ry], fill=(*color, alpha))
+    base = img.convert("RGBA")
+    base.paste(ov, mask=ov)
     return base.convert("RGB")
+
 
 def _wrap(draw, text, font, max_w):
     words, lines, cur = text.split(), [], ""
     for w in words:
         t = f"{cur} {w}".strip()
-        if draw.textbbox((0,0), t, font=font)[2] <= max_w: cur = t
+        if draw.textbbox((0, 0), t, font=font)[2] <= max_w:
+            cur = t
         else:
-            if cur: lines.append(cur)
+            if cur:
+                lines.append(cur)
             cur = w
-    if cur: lines.append(cur)
+    if cur:
+        lines.append(cur)
     return lines
 
+
 def _arrow_btn(draw, cx, cy, r=56):
-    draw.ellipse([cx-r,cy-r,cx+r,cy+r], fill=RED)
-    draw.line([(cx-15,cy),(cx+13,cy)], fill=WHITE, width=5)
-    draw.polygon([(cx+5,cy-10),(cx+21,cy),(cx+5,cy+10)], fill=WHITE)
+    draw.ellipse([cx-r, cy-r, cx+r, cy+r], fill=RED)
+    draw.line([(cx-15, cy), (cx+13, cy)], fill=WHITE, width=5)
+    draw.polygon([(cx+5, cy-10), (cx+21, cy), (cx+5, cy+10)], fill=WHITE)
+
 
 def _prev_btn(draw, cy):
-    draw.ellipse([18,cy-44,82,cy+44], fill=(222,223,228))
-    draw.polygon([(58,cy-16),(40,cy),(58,cy+16)], fill=(145,145,155))
+    draw.ellipse([18, cy-44, 82, cy+44], fill=(222, 223, 228))
+    draw.polygon([(58, cy-16), (40, cy), (58, cy+16)], fill=(145, 145, 155))
+
 
 def _nav_dots(draw, total, active):
-    gap=20; sx=(SIZE-(total-1)*gap)//2; cy=SIZE-30
+    gap = 20
+    sx  = (SIZE - (total-1)*gap) // 2
+    cy  = SIZE - 30
     for i in range(total):
-        x = sx+i*gap
-        if i==active: draw.ellipse([x-5,cy-5,x+5,cy+5], fill=DARK)
-        else:         draw.ellipse([x-4,cy-4,x+4,cy+4], fill=RULE)
+        x = sx + i*gap
+        if i == active:
+            draw.ellipse([x-5, cy-5, x+5, cy+5], fill=DARK)
+        else:
+            draw.ellipse([x-4, cy-4, x+4, cy+4], fill=RULE)
+
 
 def _sep(draw, y=SIZE-102):
-    draw.line([(55,y),(SIZE-192,y)], fill=RULE, width=2)
+    draw.line([(55, y), (SIZE-192, y)], fill=RULE, width=2)
+
 
 def _heart_shape(draw, cx, cy, sz, color):
     pts = []
     for i in range(360):
-        a=math.radians(i); sc=sz/100
-        pts.append((cx+int(sz*(16*math.sin(a)**3)*sc*0.56),
-                    cy-int(sz*(13*math.cos(a)-5*math.cos(2*a)-2*math.cos(3*a)-math.cos(4*a))*sc*0.56)))
+        a  = math.radians(i)
+        sc = sz / 100
+        pts.append((
+            cx + int(sz*(16*math.sin(a)**3)*sc*0.56),
+            cy - int(sz*(13*math.cos(a) - 5*math.cos(2*a) - 2*math.cos(3*a) - math.cos(4*a))*sc*0.56),
+        ))
     draw.polygon(pts, fill=color)
 
-def _svg_to_pil(svg_str: str, px: int) -> Image.Image:
-    svg = svg_str.strip()
-    if 'viewBox' not in svg:
-        svg = svg.replace('<svg ', '<svg viewBox="0 0 500 500" ', 1)
-    png = cairosvg.svg2png(bytestring=svg.encode(), output_width=px, output_height=px)
-    img = Image.open(io.BytesIO(png)).convert("RGBA")
-    if img.size != (px, px):
-        img = img.resize((px, px), Image.LANCZOS)
-    return img
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — CRÉATION DES SLIDES
+# SECTION 4 — CRÉATION DES SLIDES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
-    """Génère l'illustration cover via Together.ai FLUX.1-schnell."""
+def fetch_cover_image(sujet: str) -> Image.Image:
+    """Génère l'illustration de couverture via Together.ai FLUX.1-schnell."""
     if not TOGETHER_API_KEY:
         raise ValueError("TOGETHER_API_KEY manquante")
 
@@ -529,7 +353,7 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
         "centered subject, no text, no symbols, no exaggerated emotion. "
         "Instagram carousel cover, prevention and awareness campaign."
     )
-    print(f"Together.ai : appel API (modèle FLUX.1-schnell)…")
+    print("Together.ai : appel API (FLUX.1-schnell)…")
     resp = requests.post(
         "https://api.together.xyz/v1/images/generations",
         headers={
@@ -537,12 +361,12 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
             "Content-Type":  "application/json",
         },
         json={
-            "model":  "black-forest-labs/FLUX.1-schnell",
-            "prompt": prompt,
-            "width":  1024,
-            "height": 1024,
-            "steps":  4,
-            "n":      1,
+            "model":           "black-forest-labs/FLUX.1-schnell",
+            "prompt":          prompt,
+            "width":           1024,
+            "height":          1024,
+            "steps":           4,
+            "n":               1,
             "response_format": "b64_json",
         },
         timeout=90,
@@ -551,41 +375,34 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
     if resp.status_code != 200:
         print(f"Together.ai erreur : {resp.text[:300]}")
         resp.raise_for_status()
-    data = resp.json()
-    b64 = data["data"][0]["b64_json"]
+    b64 = resp.json()["data"][0]["b64_json"]
     img = Image.open(io.BytesIO(base64.b64decode(b64))).convert("RGB")
     print(f"Together.ai : image reçue {img.size}")
     return img.resize((SIZE, SIZE), Image.LANCZOS)
 
 
 def make_cover(titre: str, sujet: str, total: int) -> str:
-    """
-    Slide cover :
-      ILLUS  : image Together.ai plein fond (1080x1080)
-      OVERLAY: rectangle semi-transparent en bas pour lisibilité
-      TITRE  : texte blanc bold en bas sur l'overlay
-      NAV    : séparateur + bouton + dots
-    """
-    # Image générée par IA
+    """Cover : image IA plein fond + dégradé sombre en haut + titre blanc."""
     try:
-        bg_img = fetch_cover_image(titre, sujet)
-        print("Image Together.ai ✓")
+        img = fetch_cover_image(sujet)
+        dark_text_bg = True
     except Exception as e:
-        print(f"Together.ai indisponible ({e}) → fond dégradé")
-        bg_img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
+        print(f"Together.ai indisponible ({e}) → fond uni")
+        img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
+        dark_text_bg = False
 
-    img = bg_img.copy()
+    # Dégradé sombre du haut vers le transparent (seulement si image IA)
+    if dark_text_bg:
+        overlay = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+        od = ImageDraw.Draw(overlay)
+        for i in range(600):
+            alpha = int((1 - i/600) ** 1.4 * 210)
+            od.line([(0, i), (SIZE, i)], fill=(0, 0, 0, alpha))
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
 
-    # Overlay dégradé HAUT → transparent (titre lisible en haut)
-    overlay = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
-    od = ImageDraw.Draw(overlay)
-    for i in range(600):
-        alpha = int((1 - i/600)**1.4 * 210)
-        od.line([(0, i),(SIZE, i)], fill=(0,0,0,alpha))
-    img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
-    d   = ImageDraw.Draw(img)
+    d = ImageDraw.Draw(img)
+    text_color = WHITE if dark_text_bg else DARK
 
-    # Titre blanc EN HAUT — police adaptative
     margin = 55
     max_w  = SIZE - margin * 2
     f, lines = None, []
@@ -597,44 +414,10 @@ def make_cover(titre: str, sujet: str, total: int) -> str:
 
     y = 70
     for line in lines:
-        d.text((margin+3, y+3), line, font=f, fill=(0,0,0,140))
-        d.text((margin,   y),   line, font=f, fill=(255,255,255,255))
+        if dark_text_bg:
+            d.text((margin+3, y+3), line, font=f, fill=(0, 0, 0))
+        d.text((margin, y), line, font=f, fill=text_color)
         y += int(f.size * 1.1)
-
-    _sep(d)
-    _arrow_btn(d, SIZE-100, SIZE-100)
-    _nav_dots(d, total, 0)
-    path = "/tmp/afder_slide_1.png"
-    img.save(path, format="PNG")
-    return path
-    ILLUS_SIZE = 380
-    TITRE_Y1, TITRE_Y2 = 55, 400
-    ILLUS_Y1, ILLUS_Y2 = 415, 950
-
-    img = Image.new("RGB", (SIZE, SIZE), BG_COVER)
-    img = _blob(img, SIZE-30, SIZE//2+60, 340,420, (188,200,215), alpha=65)
-    img = _blob(img, -20,     SIZE-50,   160,160, (190,205,215), alpha=40)
-
-    illus = _svg_to_pil(svg, ILLUS_SIZE)
-    ix = (SIZE - ILLUS_SIZE) // 2
-    iy = ILLUS_Y1 + (ILLUS_Y2 - ILLUS_Y1 - ILLUS_SIZE) // 2
-    img.paste(illus, (ix, iy), illus)
-
-    d = ImageDraw.Draw(img)
-    margin = 55
-    max_w  = SIZE - margin * 2
-    f, lines = None, []
-    for font_size in [108, 92, 78, 66, 54]:
-        f     = F("OpenSans-ExtraBold.ttf", font_size)
-        lines = _wrap(d, titre.upper(), f, max_w)
-        if len(lines) * int(font_size * 1.08) <= (TITRE_Y2 - TITRE_Y1 - 20):
-            break
-
-    bloc_h = len(lines) * int(f.size * 1.08)
-    y = TITRE_Y1 + (TITRE_Y2 - TITRE_Y1 - bloc_h) // 2
-    for line in lines:
-        d.text((margin, y), line, font=f, fill=DARK)
-        y += int(f.size * 1.08)
 
     _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
@@ -646,41 +429,48 @@ def make_cover(titre: str, sujet: str, total: int) -> str:
 
 def make_content(texte: str, slide_idx: int, total: int) -> str:
     img = Image.new("RGB", (SIZE, SIZE), BG_CONTENT)
-    img = _blob(img, SIZE-40, SIZE//2+200, 280,320, (188,200,215), alpha=40)
+    img = _blob(img, SIZE-40, SIZE//2+200, 280, 320, (188, 200, 215), alpha=40)
 
-    d = ImageDraw.Draw(img)
+    d      = ImageDraw.Draw(img)
     f_reg  = F("OpenSans-Regular.ttf", 66)
     f_bold = F("OpenSans-Bold.ttf",    66)
-    margin = 72; max_w = SIZE-margin*2
-    lh = int(f_reg.size*1.50)
-    sp = d.textbbox((0,0)," ",font=f_reg)[2]
+    margin = 72
+    max_w  = SIZE - margin*2
+    lh     = int(f_reg.size * 1.50)
+    sp     = d.textbbox((0, 0), " ", font=f_reg)[2]
 
     tokens = re.split(r'(\*\*[^*]+\*\*)', texte)
     wf = []
     for tok in tokens:
         if tok.startswith("**") and tok.endswith("**"):
-            for w in tok[2:-2].split(): wf.append((w, f_bold))
+            for w in tok[2:-2].split():
+                wf.append((w, f_bold))
         else:
-            for w in tok.split(): wf.append((w, f_reg))
+            for w in tok.split():
+                wf.append((w, f_reg))
 
     lines_wf, cur_l, cur_w = [], [], 0
     for word, font in wf:
-        ww = d.textbbox((0,0),word,font=font)[2]
-        need = ww+(sp if cur_l else 0)
-        if cur_w+need<=max_w: cur_l.append((word,font)); cur_w+=need
+        ww   = d.textbbox((0, 0), word, font=font)[2]
+        need = ww + (sp if cur_l else 0)
+        if cur_w + need <= max_w:
+            cur_l.append((word, font))
+            cur_w += need
         else:
-            if cur_l: lines_wf.append(cur_l)
-            cur_l,cur_w=[(word,font)],ww
-    if cur_l: lines_wf.append(cur_l)
+            if cur_l:
+                lines_wf.append(cur_l)
+            cur_l, cur_w = [(word, font)], ww
+    if cur_l:
+        lines_wf.append(cur_l)
 
-    total_h = len(lines_wf)*lh
-    y = 90 + (SIZE-148-90-total_h)//2
+    total_h = len(lines_wf) * lh
+    y = 90 + (SIZE - 148 - 90 - total_h) // 2
     for wfline in lines_wf:
-        lx=margin
-        for word,font in wfline:
-            d.text((lx,y),word,font=font,fill=TEXT_CLR)
-            lx+=d.textbbox((0,0),word,font=font)[2]+sp
-        y+=lh
+        lx = margin
+        for word, font in wfline:
+            d.text((lx, y), word, font=font, fill=TEXT_CLR)
+            lx += d.textbbox((0, 0), word, font=font)[2] + sp
+        y += lh
 
     _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
@@ -693,141 +483,162 @@ def make_content(texte: str, slide_idx: int, total: int) -> str:
 
 def make_cta(cta_titre: str, cta_sous: str, total: int) -> str:
     img = Image.new("RGB", (SIZE, SIZE), BG_CONTENT)
-    img = _blob(img, SIZE//2, SIZE-60, 440,220, (188,200,215), alpha=62)
-    img = _blob(img, 45, 175, 155,155, (188,200,215), alpha=40)
+    img = _blob(img, SIZE//2, SIZE-60, 440, 220, (188, 200, 215), alpha=62)
+    img = _blob(img, 45, 175, 155, 155, (188, 200, 215), alpha=40)
 
-    d = ImageDraw.Draw(img)
+    d   = ImageDraw.Draw(img)
     hcy = 138
-    d.ellipse([SIZE//2-60,hcy-60,SIZE//2+60,hcy+60], fill=RED)
+    d.ellipse([SIZE//2-60, hcy-60, SIZE//2+60, hcy+60], fill=RED)
     _heart_shape(d, SIZE//2, hcy, 44, WHITE)
-    d.line([(62,hcy-76),(SIZE//2-88,hcy-76)], fill=RULE, width=2)
-    d.line([(SIZE//2+88,hcy-76),(SIZE-62,hcy-76)], fill=RULE, width=2)
+    d.line([(62, hcy-76), (SIZE//2-88, hcy-76)], fill=RULE, width=2)
+    d.line([(SIZE//2+88, hcy-76), (SIZE-62, hcy-76)], fill=RULE, width=2)
 
     f_cta = F("OpenSans-ExtraBold.ttf", 106)
     lines = _wrap(d, cta_titre, f_cta, SIZE-130)
-    if len(lines)>2:
-        f_cta=F("OpenSans-ExtraBold.ttf",88)
-        lines=_wrap(d,cta_titre,f_cta,SIZE-130)
-    y=255
+    if len(lines) > 2:
+        f_cta = F("OpenSans-ExtraBold.ttf", 88)
+        lines = _wrap(d, cta_titre, f_cta, SIZE-130)
+    y = 255
     for line in lines:
-        bb=d.textbbox((0,0),line,font=f_cta)
-        d.text(((SIZE-(bb[2]-bb[0]))//2,y),line,font=f_cta,fill=DARK)
-        y+=int(f_cta.size*1.08)
+        bb = d.textbbox((0, 0), line, font=f_cta)
+        d.text(((SIZE-(bb[2]-bb[0]))//2, y), line, font=f_cta, fill=DARK)
+        y += int(f_cta.size * 1.08)
 
-    y+=34
-    f_sub=F("OpenSans-Regular.ttf",50)
-    for line in _wrap(d,cta_sous,f_sub,SIZE-175):
-        bb=d.textbbox((0,0),line,font=f_sub)
-        d.text(((SIZE-(bb[2]-bb[0]))//2,y),line,font=f_sub,fill=MID_GREY)
-        y+=int(f_sub.size*1.48)
+    y += 34
+    f_sub = F("OpenSans-Regular.ttf", 50)
+    for line in _wrap(d, cta_sous, f_sub, SIZE-175):
+        bb = d.textbbox((0, 0), line, font=f_sub)
+        d.text(((SIZE-(bb[2]-bb[0]))//2, y), line, font=f_sub, fill=MID_GREY)
+        y += int(f_sub.size * 1.48)
 
-    f_h=F("OpenSans-Semibold.ttf",46)
-    handle="@AFDER.RECOVERY"
-    bb=d.textbbox((0,0),handle,font=f_h)
-    d.text(((SIZE-(bb[2]-bb[0]))//2,SIZE-130),handle,font=f_h,fill=DARK)
-    _sep(d,SIZE-172)
-    _prev_btn(d,SIZE//2)
-    _nav_dots(d,total,total-1)
-    path=f"/tmp/afder_slide_{total}.png"
-    img.save(path,format="PNG")
+    f_h    = F("OpenSans-Semibold.ttf", 46)
+    handle = "@AFDER.RECOVERY"
+    bb     = d.textbbox((0, 0), handle, font=f_h)
+    d.text(((SIZE-(bb[2]-bb[0]))//2, SIZE-130), handle, font=f_h, fill=DARK)
+    _sep(d, SIZE-172)
+    _prev_btn(d, SIZE//2)
+    _nav_dots(d, total, total-1)
+    path = f"/tmp/afder_slide_{total}.png"
+    img.save(path, format="PNG")
     return path
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — PUBLICATION INSTAGRAM
+# SECTION 5 — PUBLICATION INSTAGRAM
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def ig_child(url):
-    r = requests.post(
-        f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
-        data={"image_url":url,"is_carousel_item":"true","access_token":IG_TOKEN},
-    )
-    resp = r.json()
-    if "id" not in resp: raise Exception(f"Child failed: {resp}")
-    return resp["id"]
-
-def ig_carousel(ids, caption):
-    r = requests.post(
-        f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media",
-        data={"media_type":"CAROUSEL","children":",".join(ids),
-              "caption":caption,"access_token":IG_TOKEN},
-    )
-    resp = r.json()
-    if "id" not in resp: raise Exception(f"Carousel failed: {resp}")
-    return resp["id"]
-
-def ig_publish(cid):
-    r = requests.post(
-        f"https://graph.instagram.com/v19.0/{IG_USER_ID}/media_publish",
-        data={"creation_id":cid,"access_token":IG_TOKEN},
-    )
+def _ig_post(endpoint, data):
+    data = {**data, "access_token": IG_TOKEN}
+    r = requests.post(f"{IG_API}/{endpoint}", data=data, timeout=60)
     return r.json()
 
+
+def ig_child(url):
+    resp = _ig_post(f"{IG_USER_ID}/media", {"image_url": url, "is_carousel_item": "true"})
+    if "id" not in resp:
+        raise Exception(f"Child failed: {resp}")
+    return resp["id"]
+
+
+def ig_carousel(ids, caption):
+    resp = _ig_post(f"{IG_USER_ID}/media", {
+        "media_type": "CAROUSEL",
+        "children":   ",".join(ids),
+        "caption":    caption,
+    })
+    if "id" not in resp:
+        raise Exception(f"Carousel failed: {resp}")
+    return resp["id"]
+
+
+def ig_wait_ready(container_id, max_wait=120):
+    """Attend que le conteneur soit FINISHED avant de publier."""
+    waited = 0
+    while waited < max_wait:
+        r = requests.get(
+            f"{IG_API}/{container_id}",
+            params={"fields": "status_code", "access_token": IG_TOKEN},
+            timeout=30,
+        ).json()
+        status = r.get("status_code")
+        print(f"Statut conteneur : {status}")
+        if status == "FINISHED":
+            return
+        if status in ("ERROR", "EXPIRED"):
+            raise Exception(f"Conteneur en échec : {r}")
+        time.sleep(5)
+        waited += 5
+    raise Exception("Timeout : conteneur pas prêt")
+
+
+def ig_publish(cid):
+    resp = _ig_post(f"{IG_USER_ID}/media_publish", {"creation_id": cid})
+    if "id" not in resp:
+        raise Exception(f"Publish failed: {resp}")
+    return resp
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 8 — MAIN
+# SECTION 6 — MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
-IG_TOKEN = refresh_instagram_token(IG_TOKEN)
+def main():
+    # Token Facebook longue durée → utilisé tel quel (pas de refresh automatique)
+    print("Token utilisé tel quel (token longue durée)")
 
-hist, hist_sha = get_historique()
-today    = datetime.date.today().strftime("%Y-%m-%d")
-deja_vus = [h.get("sujet","") for h in hist]
-neufs    = [s for s in SUJETS if s not in deja_vus]
-sujet    = random.choice(neufs) if neufs else deja_vus[0]
-print(f"Sujet : {sujet}")
+    # Historique & choix du sujet
+    hist, hist_sha = get_historique()
+    today    = datetime.date.today().strftime("%Y-%m-%d")
+    deja_vus = [h.get("sujet", "") for h in hist]
+    neufs    = [s for s in SUJETS if s not in deja_vus]
+    sujet    = random.choice(neufs) if neufs else random.choice(SUJETS)
+    print(f"Sujet : {sujet}")
 
-client = Groq(api_key=GROQ_API_KEY)
-print("Génération Groq…")
-raw  = generate_with_retry(client, sujet)
-data = parse_groq_response(raw)
-print(f"Titre : {data['accroche']}")
+    # Texte via Groq
+    client = Groq(api_key=GROQ_API_KEY)
+    print("Génération Groq…")
+    raw  = generate_text(client, sujet)
+    data = parse_groq_response(raw)
+    print(f"Titre : {data['accroche']}")
 
-# SVG dans un appel séparé (évite troncature JSON)
-print("Génération SVG…")
-try:
-    svg_raw = generate_svg(client, sujet)
-    if "<svg" in svg_raw:
-        svg_raw = svg_raw[svg_raw.find("<svg"):]
-    if "</svg>" in svg_raw:
-        svg_raw = svg_raw[:svg_raw.rfind("</svg>")+6]
-    cairosvg.svg2png(bytestring=svg_raw.encode(), output_width=50, output_height=50)
-    svg = svg_raw
-    print(f"SVG valide ✓ ({len(svg)} chars)")
-except Exception as e:
-    print(f"SVG invalide ({e}) → fallback")
-    svg = get_valid_svg({}, sujet)
+    # Slides
+    total  = 4
+    slides = [
+        make_cover(data["accroche"], sujet, total),
+        make_content(data["slides"][0]["contenu"], 2, total),
+        make_content(data["slides"][1]["contenu"], 3, total),
+        make_cta(data["cta"], data["cta_sous"], total),
+    ]
+    print(f"Slides : {slides}")
 
-hist.append({"date": today, "sujet": sujet})
-save_historique(hist, hist_sha)
+    # Upload Cloudinary
+    urls = []
+    for path in slides:
+        res = cloudinary.uploader.upload(
+            path,
+            folder="afder_carousel",
+            format="png",
+            resource_type="image",
+            access_mode="public",
+        )
+        urls.append(res["secure_url"])
+        print(f"Upload ✓  {res['secure_url']}")
 
-total  = 4
-slides = [
-    make_cover(data["accroche"], sujet, total),
-    make_content(data["slides"][0]["contenu"], 2, total),
-    make_content(data["slides"][1]["contenu"], 3, total),
-    make_cta(data["cta"], data["cta_sous"], total),
-]
-print(f"Slides : {slides}")
+    # Instagram
+    child_ids = []
+    for u in urls:
+        print(f"Container : {u}")
+        child_ids.append(ig_child(u))
+        time.sleep(3)
 
-urls = []
-for path in slides:
-    res = cloudinary.uploader.upload(
-        path,
-        folder="afder_carousel",
-        format="png",
-        resource_type="image",
-        access_mode="public",
-    )
-    urls.append(res["secure_url"])
-    print(f"Upload ✓  {res['secure_url']}")
+    carousel_id = ig_carousel(child_ids, data["caption"])
+    print(f"Carrousel : {carousel_id}")
+    ig_wait_ready(carousel_id)
+    pub = ig_publish(carousel_id)
+    print(f"Publié ✓  {pub}")
 
-child_ids = []
-for u in urls:
-    print(f"Container : {u}")
-    child_ids.append(ig_child(u))
-    time.sleep(3)
+    # Historique sauvegardé SEULEMENT après publication réussie
+    hist.append({"date": today, "sujet": sujet})
+    save_historique(hist, hist_sha)
 
-carousel_id = ig_carousel(child_ids, data["caption"])
-print(f"Carrousel : {carousel_id}")
-time.sleep(15)
-pub = ig_publish(carousel_id)
-print(f"Publié ✓  {pub}")
+
+if __name__ == "__main__":
+    main()
