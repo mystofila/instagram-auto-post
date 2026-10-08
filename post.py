@@ -19,7 +19,7 @@ IG_USER_ID      = os.environ["INSTAGRAM_USER_ID"]
 GH_TOKEN        = os.environ["GH_TOKEN"]
 REPO            = "mystofila/instagram-auto-post"
 HISTORIQUE_FILE = "historique_afder.json"
-GROQ_MODEL      = "groq/compound-mini"
+GROQ_MODEL      = "openai/gpt-oss-20b"
 
 cloudinary.config(
     cloud_name = os.environ["CLOUDINARY_CLOUD_NAME"],
@@ -189,6 +189,7 @@ def _groq_call(client, system, user, max_tok=1500):
                 ],
                 temperature=0.6,
                 max_tokens=max_tok,
+                reasoning_effort="none",
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
