@@ -189,7 +189,7 @@ def _groq_call(client, system, user, max_tok=1500):
                 ],
                 temperature=0.6,
                 max_tokens=max_tok,
-                reasoning_effort="none",
+                reasoning_effort="low",
             )
             return resp.choices[0].message.content.strip()
         except Exception as e:
