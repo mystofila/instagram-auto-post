@@ -594,7 +594,7 @@ def make_cover(titre: str, sujet: str, total: int) -> str:
 
     # Titre centré au MILIEU ABSOLU de la slide (x et y)
     f     = F("OpenSans-ExtraBold.ttf", 72)
-    max_w = SIZE - 120
+    max_w = SIZE - 200
     lines = _wrap(d, titre.upper(), f, max_w)
     lh     = int(72 * 1.18)
     bloc_h = len(lines) * lh
@@ -776,7 +776,11 @@ slides = [
     make_cover(data["accroche"], sujet, total),
     make_content(data["slides"][0]["contenu"], 2, total),
     make_content(data["slides"][1]["contenu"], 3, total),
-    make_cta(data["cta"], data["cta_sous"], total),
+    make_cta(
+        "L'AFDER PEUT T'AIDER",
+        "Contacte-nous sur afder.org — pair-aidance & rétablissement",
+        total
+    ),
 ]
 print(f"Slides : {slides}")
 
