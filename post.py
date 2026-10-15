@@ -560,51 +560,53 @@ def fetch_cover_image(titre: str, sujet: str) -> Image.Image:
 
 def make_cover(titre: str, sujet: str, total: int) -> str:
     """
-    Layout cover :
-      TOP   y=0→540   : fond blanc, titre centré verticalement et horizontalement
-      BOT   y=540→980 : image Together.ai (ou fond gris)
-      NAV   y=980→1080: séparateur + bouton + dots
+    Cover : formes géométriques colorées + titre centré au milieu absolu.
+    Palette choisie selon le sujet pour varier les couleurs.
     """
-    # Zone haute : fond blanc
-    img = Image.new("RGB", (SIZE, SIZE), WHITE)
-    d   = ImageDraw.Draw(img)
+    COVER_PALETTES = [
+        {"bg": (245,242,255), "shapes": [(180,160,230),(220,190,255),(150,130,210),(200,170,240)]},
+        {"bg": (240,252,245), "shapes": [(130,200,160),(90,180,130),(160,220,180),(70,160,110)]},
+        {"bg": (255,245,240), "shapes": [(240,150,110),(220,120,90),(250,170,140),(200,100,80)]},
+        {"bg": (240,248,255), "shapes": [(100,170,220),(70,150,200),(130,190,240),(80,140,190)]},
+        {"bg": (255,245,250), "shapes": [(220,130,160),(200,110,140),(240,150,180),(180,100,130)]},
+    ]
+    p = COVER_PALETTES[hash(sujet) % len(COVER_PALETTES)]
 
-    # Titre : centré horizontalement ET verticalement dans la zone haute
-    margin = 70
-    max_w  = SIZE - margin * 2
-    ZONE_H = 520   # hauteur zone titre
+    img = Image.new("RGB", (SIZE, SIZE), p["bg"])
 
-    f, lines = None, []
-    for font_size in [108, 92, 78, 66, 54]:
-        f     = F("OpenSans-ExtraBold.ttf", font_size)
-        lines = _wrap(d, titre.upper(), f, max_w)
-        if len(lines) * int(font_size * 1.1) <= ZONE_H - 60:
-            break
-
-    bloc_h = len(lines) * int(f.size * 1.1)
-    y = (ZONE_H - bloc_h) // 2   # centré verticalement dans la zone haute
-
-    for line in lines:
-        bb = d.textbbox((0, 0), line, font=f)
-        lw = bb[2] - bb[0]
-        x  = (SIZE - lw) // 2    # centré horizontalement
-        d.text((x, y), line, font=f, fill=DARK)
-        y += int(f.size * 1.1)
-
-    # Ligne séparatrice
-    d.line([(0, 540), (SIZE, 540)], fill=RULE, width=2)
-
-    # Zone basse : image Together.ai ou fond gris
-    try:
-        bg_img = fetch_cover_image(titre, sujet)
-        bg_img = bg_img.resize((SIZE, 440), Image.LANCZOS)
-        img.paste(bg_img, (0, 542))
-        print("Image Together.ai ✓")
-    except Exception as e:
-        print(f"Together.ai indisponible ({e}) → fond gris")
-        d.rectangle([0, 542, SIZE, 982], fill=BG_COVER)
+    # Formes géométriques déco
+    ov = Image.new("RGBA", (SIZE, SIZE), (0,0,0,0))
+    od = ImageDraw.Draw(ov)
+    c  = p["shapes"]
+    od.ellipse([SIZE-380, SIZE-380, SIZE+100, SIZE+100], fill=(*c[0], 80))
+    od.ellipse([-120, -120, 280, 280],                  fill=(*c[1], 70))
+    od.ellipse([-80, SIZE-280, 220, SIZE+80],            fill=(*c[2], 60))
+    od.ellipse([SIZE-200, -80, SIZE+80, 200],            fill=(*c[3], 65))
+    cx2, cy2, r2 = SIZE//2+200, SIZE//2-180, 80
+    od.polygon([(cx2,cy2-r2),(cx2+r2,cy2),(cx2,cy2+r2),(cx2-r2,cy2)], fill=(*c[0], 45))
+    od.ellipse([SIZE//2-60, SIZE-220, SIZE//2+60, SIZE-100], fill=(*c[2], 50))
+    img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
 
     d = ImageDraw.Draw(img)
+
+    # Ligne accent colorée en haut
+    d.rectangle([0, 0, SIZE, 7], fill=c[0])
+
+    # Titre centré au MILIEU ABSOLU de la slide (x et y)
+    f     = F("OpenSans-ExtraBold.ttf", 72)
+    max_w = SIZE - 120
+    lines = _wrap(d, titre.upper(), f, max_w)
+    lh     = int(72 * 1.18)
+    bloc_h = len(lines) * lh
+    y      = (SIZE - bloc_h) // 2
+
+    for line in lines:
+        bb = d.textbbox((0,0), line, font=f)
+        x  = (SIZE - (bb[2]-bb[0])) // 2
+        d.text((x, y), line, font=f, fill=DARK)
+        y += lh
+
+    # Nav
     _sep(d)
     _arrow_btn(d, SIZE-100, SIZE-100)
     _nav_dots(d, total, 0)
@@ -612,6 +614,7 @@ def make_cover(titre: str, sujet: str, total: int) -> str:
     path = "/tmp/afder_slide_1.png"
     img.save(path, format="PNG")
     return path
+
 
 def make_content(texte: str, slide_idx: int, total: int) -> str:
     img = Image.new("RGB", (SIZE, SIZE), BG_CONTENT)
