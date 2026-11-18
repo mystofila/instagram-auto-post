@@ -90,6 +90,49 @@ SUJETS = [
     "Sommeil, alimentation, mouvement : les bases du rétablissement",
     "Comment gérer les triggers au quotidien",
     "Célébrer ses progrès : un acte révolutionnaire",
+    # Premiers pas & envies
+    "Les premiers jours de sobriété : ce qui aide vraiment",
+    "Le craving : comprendre l'envie et la traverser",
+    "Faim, colère, solitude, fatigue : les 4 signaux à écouter",
+    "Prévenir la rechute : repérer les signaux d'alerte",
+    "L'ennui : l'ennemi discret du rétablissement",
+    # Vie sociale
+    "Fêtes et sorties : rester fidèle à soi en société",
+    "Dire non sans se justifier",
+    "S'entourer de personnes qui font du bien",
+    "Retrouver du plaisir sans produit",
+    "Le sport comme allié du rétablissement",
+    # Demander de l'aide
+    "Demander de l'aide n'est pas une faiblesse",
+    "Se sentir seul dans son combat : vous ne l'êtes pas",
+    "Trouver un pair-aidant près de chez soi",
+    "Les groupes de parole : à quoi s'attendre la première fois",
+    "Parler de sa rechute à un proche sans honte",
+    # Regard sur l'addiction
+    "Pourquoi l'addiction n'est pas un manque de volonté",
+    "Les mots qui blessent : stigmatisation et addiction",
+    "Les addictions sans produit : écrans, jeux, achats",
+    "Les pensées automatiques : apprendre à les repérer",
+    "Le sentiment d'imposture dans le rétablissement",
+    # Relations
+    "Réparer la confiance avec ses proches",
+    "Couple et rétablissement : retrouver le dialogue",
+    "Parent et en rétablissement : rester présent",
+    "Accompagner un proche qui refuse de se soigner",
+    "Ce qu'on peut dire (et éviter de dire) à quelqu'un en difficulté",
+    "L'écoute sans jugement : savoir simplement être là",
+    # Outils du quotidien
+    "Écrire pour se libérer : le journal de rétablissement",
+    "Respirer pour s'apaiser en trois minutes",
+    "La gratitude : un outil simple pour tenir",
+    "Se fixer des objectifs réalistes",
+    "Reprendre le travail après une période difficile",
+    # Soi
+    "Se pardonner : un chemin, pas une case à cocher",
+    "Se connaître : valeurs, besoins, limites",
+    "La confiance en soi se reconstruit petit à petit",
+    "Honorer chaque étape franchie",
+    "Vivre l'instant présent quand tout semble lourd",
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -202,8 +245,29 @@ def _groq_call(client, system, user, max_tok=1500):
     raise Exception("Groq indisponible après 3 tentatives")
 
 
-def generate_with_retry(client, sujet):
+STYLES_TITRE = [
+    "une question directe (dans l'esprit de : ET SI TU TE PARDONNAIS ?)",
+    "une affirmation courte et forte (dans l'esprit de : TU N'ES PAS SEUL)",
+    "un conseil à l'impératif (dans l'esprit de : ÉCOUTE TES BESOINS)",
+    "un chiffre suivi d'une liste (dans l'esprit de : 3 SIGNES À NE PAS IGNORER)",
+    "une invitation (dans l'esprit de : ET SI ON EN PARLAIT ?)",
+    "un constat qui interpelle (dans l'esprit de : LA HONTE MENT)",
+    "une phrase positive (dans l'esprit de : CHAQUE PAS COMPTE)",
+]
+
+
+def generate_with_retry(client, sujet, titres_recents=None):
     """Appel 1 : texte uniquement (JSON court, jamais tronqué)."""
+    titres_recents = titres_recents or []
+    style = random.choice(STYLES_TITRE)
+    consigne_titre = f"Le titre doit être {style}. Ne recopie pas l'exemple. "
+    if titres_recents:
+        consigne_titre += (
+            "Titres DÉJÀ publiés, à ne PAS reprendre ni imiter, et ne commence pas "
+            "par les mêmes mots : " + " | ".join(titres_recents) + ". "
+        )
+    if "deuil" not in sujet.lower():
+        consigne_titre += "N'utilise pas le mot DEUIL dans le titre. "
     system = (
         "Tu es expert en santé mentale, addiction et pair-aidance. "
         "Tu réponds UNIQUEMENT en JSON valide sur une seule ligne, "
@@ -213,6 +277,7 @@ def generate_with_retry(client, sujet):
     )
     user = (
         f'''Carrousel Instagram @afder.recovery sur : "{sujet}"\n\n'''
+        f'''{consigne_titre}\n\n'''
         '''JSON sur UNE SEULE LIGNE :\n'''
         '''{"accroche":"TITRE FRANÇAIS MAX 5 MOTS MAJUSCULES",'''
         '''"slides":[{"contenu":"2-3 phrases bienveillantes max 180 chars tutoiement"},'''
@@ -744,12 +809,18 @@ hist, hist_sha = get_historique()
 today    = datetime.date.today().strftime("%Y-%m-%d")
 deja_vus = [h.get("sujet","") for h in hist]
 neufs    = [s for s in SUJETS if s not in deja_vus]
-sujet    = random.choice(neufs) if neufs else deja_vus[0]
+if neufs:
+    sujet = random.choice(neufs)
+else:
+    # Tous les sujets ont été faits : on reprend celui utilisé il y a le plus longtemps
+    dernier = {s: i for i, s in enumerate(deja_vus)}
+    sujet = min(SUJETS, key=lambda s: dernier.get(s, -1))
+titres_recents = [h.get("titre", "") for h in hist if h.get("titre")][-12:]
 print(f"Sujet : {sujet}")
 
 client = Groq(api_key=GROQ_API_KEY)
 print("Génération Groq…")
-raw  = generate_with_retry(client, sujet)
+raw  = generate_with_retry(client, sujet, titres_recents)
 data = parse_groq_response(raw)
 print(f"Titre : {data['accroche']}")
 
@@ -768,7 +839,7 @@ except Exception as e:
     print(f"SVG invalide ({e}) → fallback")
     svg = get_valid_svg({}, sujet)
 
-hist.append({"date": today, "sujet": sujet})
+hist.append({"date": today, "sujet": sujet, "titre": data["accroche"]})
 save_historique(hist, hist_sha)
 
 total  = 4
