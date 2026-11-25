@@ -104,7 +104,7 @@ SUJETS = [
     "Le sport comme allié du rétablissement",
     # Demander de l'aide
     "Demander de l'aide n'est pas une faiblesse",
-    "Se sentir seul dans son combat : vous ne l'êtes pas",
+    "Se sentir seul dans son combat : tu ne l'es pas",
     "Trouver un pair-aidant près de chez soi",
     "Les groupes de parole : à quoi s'attendre la première fois",
     "Parler de sa rechute à un proche sans honte",
@@ -117,7 +117,7 @@ SUJETS = [
     # Relations
     "Réparer la confiance avec ses proches",
     "Couple et rétablissement : retrouver le dialogue",
-    "Parent et en rétablissement : rester présent",
+    "Parent en rétablissement : rester présent",
     "Accompagner un proche qui refuse de se soigner",
     "Ce qu'on peut dire (et éviter de dire) à quelqu'un en difficulté",
     "L'écoute sans jugement : savoir simplement être là",
@@ -134,6 +134,82 @@ SUJETS = [
     "Honorer chaque étape franchie",
     "Vivre l'instant présent quand tout semble lourd",
 ]
+
+
+# Titres de couverture écrits à la main (un par sujet) : français garanti, jamais deux fois le même
+TITRES = {
+    "La co-dépendance, c'est quoi ?": "La co-dépendance, c'est quoi ?",
+    "Codépendance : quand aider devient épuisant": "Aider jusqu'à l'épuisement",
+    "Aimer quelqu'un en addiction sans se perdre": "Aimer sans te perdre",
+    "Comment poser des limites bienveillantes": "Poser des limites avec douceur",
+    "Quand l'amour devient contrôle : reconnaître la codépendance": "Amour ou contrôle ?",
+    "Rechute : ce n'est pas un échec, c'est une information": "Une rechute n'est pas un échec",
+    "Le rétablissement n'est pas une ligne droite": "Le chemin n'est jamais droit",
+    "Après une rechute : comment se relever sans se juger": "Se relever sans se juger",
+    "Les petites victoires qui comptent dans le rétablissement": "Les petites victoires comptent",
+    "Rétablissement : pourquoi comparer son chemin est dangereux": "Ne compare pas ton chemin",
+    "La honte en addiction : comment s'en libérer": "La honte ne te définit pas",
+    "Colère, tristesse, peur : les émotions cachées de l'addiction": "Ces émotions qu'on cache",
+    "Santé mentale et addiction : le lien qu'on n'explique pas": "Ce lien qu'on ne voit pas",
+    "Comment gérer l'anxiété sans substance": "Apaiser l'anxiété autrement",
+    "Apprendre à se faire confiance à nouveau": "Se faire confiance à nouveau",
+    "Pair-aidance : la force de l'expérience vécue": "La force du vécu",
+    "Pair-aidant : ce que ça change d'être compris par quelqu'un qui a vécu": "Être compris par un pair",
+    "Comment soutenir sans donner de conseils": "Soutenir sans conseiller",
+    "L'écoute active : l'outil le plus puissant du pair-aidant": "Le pouvoir de l'écoute active",
+    "Pair-aidance : prendre soin de soi pour prendre soin des autres": "D'abord prendre soin de toi",
+    "Famille et addiction : briser le silence": "Briser le silence en famille",
+    "Ce que vivent les proches : les émotions qu'on tait": "Ce que vivent les proches",
+    "Comment parler de l'addiction à ses enfants": "En parler à tes enfants",
+    "Pardon et réconciliation : est-ce toujours possible ?": "Pardonner : est-ce toujours possible ?",
+    "L'entourage aussi a besoin de soutien": "L'entourage a aussi besoin d'aide",
+    "Le deuil de la personne qu'on était avant": "Dire adieu à qui tu étais",
+    "Qui suis-je sans ma dépendance ?": "Qui suis-je sans ma dépendance ?",
+    "Reconstruire l'estime de soi après l'addiction": "Retrouver l'estime de soi",
+    "Trouver un sens à son histoire de vie": "Donner un sens à ton histoire",
+    "Les forces cachées dans ton parcours de rétablissement": "Tes forces cachées",
+    "Les signes que tu prends soin de toi malgré tout": "Tu prends déjà soin de toi",
+    "Routine et rétablissement : pourquoi la structure aide": "Pourquoi la routine aide",
+    "Sommeil, alimentation, mouvement : les bases du rétablissement": "Dormir, manger, bouger",
+    "Comment gérer les triggers au quotidien": "Gérer les déclencheurs",
+    "Célébrer ses progrès : un acte révolutionnaire": "Célèbre tes progrès",
+    "Les premiers jours de sobriété : ce qui aide vraiment": "Tenir les premiers jours",
+    "Le craving : comprendre l'envie et la traverser": "Traverser l'envie",
+    "Faim, colère, solitude, fatigue : les 4 signaux à écouter": "Les 4 signaux à écouter",
+    "Prévenir la rechute : repérer les signaux d'alerte": "Repérer les signaux d'alerte",
+    "L'ennui : l'ennemi discret du rétablissement": "L'ennui, cet ennemi discret",
+    "Fêtes et sorties : rester fidèle à soi en société": "Rester toi-même en société",
+    "Dire non sans se justifier": "Dire non sans te justifier",
+    "S'entourer de personnes qui font du bien": "Entoure-toi de bienveillance",
+    "Retrouver du plaisir sans produit": "Le plaisir sans produit",
+    "Le sport comme allié du rétablissement": "Le sport, un allié précieux",
+    "Demander de l'aide n'est pas une faiblesse": "Demander de l'aide, c'est fort",
+    "Se sentir seul dans son combat : tu ne l'es pas": "Tu n'es pas seul",
+    "Trouver un pair-aidant près de chez soi": "Trouver un pair-aidant",
+    "Les groupes de parole : à quoi s'attendre la première fois": "Ton premier groupe de parole",
+    "Parler de sa rechute à un proche sans honte": "Parler de sa rechute",
+    "Pourquoi l'addiction n'est pas un manque de volonté": "Pas une question de volonté",
+    "Les mots qui blessent : stigmatisation et addiction": "Les mots qui blessent",
+    "Les addictions sans produit : écrans, jeux, achats": "Addictions sans produit",
+    "Les pensées automatiques : apprendre à les repérer": "Repérer tes pensées automatiques",
+    "Le sentiment d'imposture dans le rétablissement": "Se sentir imposteur",
+    "Réparer la confiance avec ses proches": "Réparer la confiance",
+    "Couple et rétablissement : retrouver le dialogue": "Retrouver le dialogue à deux",
+    "Parent en rétablissement : rester présent": "Être un parent présent",
+    "Accompagner un proche qui refuse de se soigner": "Quand un proche refuse l'aide",
+    "Ce qu'on peut dire (et éviter de dire) à quelqu'un en difficulté": "Les mots qui aident",
+    "L'écoute sans jugement : savoir simplement être là": "Être là, simplement",
+    "Écrire pour se libérer : le journal de rétablissement": "Écrire pour se libérer",
+    "Respirer pour s'apaiser en trois minutes": "Respire : trois minutes suffisent",
+    "La gratitude : un outil simple pour tenir": "Un outil simple : la gratitude",
+    "Se fixer des objectifs réalistes": "Des objectifs à ta mesure",
+    "Reprendre le travail après une période difficile": "Reprendre le travail en douceur",
+    "Se pardonner : un chemin, pas une case à cocher": "Se pardonner, pas à pas",
+    "Se connaître : valeurs, besoins, limites": "Tes valeurs, tes besoins, tes limites",
+    "La confiance en soi se reconstruit petit à petit": "La confiance revient petit à petit",
+    "Honorer chaque étape franchie": "Chaque étape compte",
+    "Vivre l'instant présent quand tout semble lourd": "Un instant à la fois",
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 1 — HISTORIQUE GITHUB
@@ -822,6 +898,7 @@ client = Groq(api_key=GROQ_API_KEY)
 print("Génération Groq…")
 raw  = generate_with_retry(client, sujet, titres_recents)
 data = parse_groq_response(raw)
+data["accroche"] = TITRES.get(sujet, data["accroche"])
 print(f"Titre : {data['accroche']}")
 
 # SVG dans un appel séparé (évite troncature JSON)
